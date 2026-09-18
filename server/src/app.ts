@@ -172,6 +172,14 @@ export function createApp(store: BffStore, config: BffConfig): Express {
     res.status(204).end();
   });
 
+  // GET /api/sessions/:id/messages（UI-T6 历史回显）：切会话时拉既有问答。纯记账读，
+  // 不触网关（任务事实源在网关，此处是 UI 域索引副本——spec §8）。属主语义同上。
+  app.get("/api/sessions/:id/messages", (req, res) => {
+    const s = store.getUiSession(req.params.id);
+    if (!s || s.username !== req.user) return sendError(res, 404, "NOT_FOUND", "session not found");
+    res.json(store.listMessages(s.id));
+  });
+
   // ── 网关反代（契约 §2）：X-User/Bearer 注入 + 响应透传 ──────────────────────────────
 
   /** 网关 JSON 响应透传：状态与体原样（429 两种含义、403 属主拒等文案区分靠网关 message）。 */
