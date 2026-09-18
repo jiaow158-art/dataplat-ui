@@ -8,6 +8,8 @@ import express, { type Express, type Request, type Response } from "express";
 import { compare, hashSync } from "bcryptjs";
 import { randomBytes, randomUUID } from "node:crypto";
 import type { IncomingMessage } from "node:http";
+import { basename, resolve, sep } from "node:path";
+import { readFileSync } from "node:fs";
 import type { BffStore } from "./db.ts";
 import { GatewayClient, GatewayUnreachableError, type GatewayResponse } from "./gateway.ts";
 import { SseFrameParser, type SseEvent } from "./sse-parser.ts";
@@ -23,6 +25,8 @@ export interface BffConfig {
   gatewayUrl: string;
   /** 网关 Bearer——只从进程 env 读入（红线：不进日志/响应/任何输出）。 */
   authToken: string;
+  /** 报告根目录（UI-T7）：与网关 GATEWAY_REPORTS_DIR 同机只读；缺省时 /api/reports 回 500。 */
+  reportsDir?: string;
   /** 登录失败人为慢响应下限 ms（spec §6.5 防爆破计时，默认 400）。 */
   loginMinFailMs?: number;
   /** 同用户名登录尝试上限（次/分钟，默认 5）。 */
@@ -328,6 +332,59 @@ export function createApp(store: BffStore, config: BffConfig): Express {
     res.on("close", () => {
       if (!upstream.readableEnded) stream.abort();
     });
+  });
+
+  // ── 报告静态服务（UI-T7，spec §4/§6.3/§6.4、契约 §8）───────────────────────────────
+  // 三道闸：记账属主（403）→ 网关以本人身份二次确认（403/404 透传）→ 路径遏制（resolve 后
+  // 必须在 REPORTS_DIR 内）。HTML 是引擎生成的不可信内容：nosniff + CSP 收紧（留内联脚本
+  // ——报告含内联 ECharts），下载走 attachment。
+  app.get("/api/reports", async (req, res) => {
+    const user = req.user!;
+    const runId = req.query.run_id;
+    if (typeof runId !== "string" || !runId) return sendError(res, 400, "BAD_REQUEST", "run_id is required");
+
+    const msg = store.getMessageByRunId(runId);
+    if (!msg) return sendError(res, 404, "NOT_FOUND", "report not found");
+    const ui = store.getUiSession(msg.ui_session_id);
+    if (!ui || ui.username !== user) return sendError(res, 403, "FORBIDDEN", "report owner mismatch");
+    if (!msg.report_path) return sendError(res, 404, "NOT_FOUND", "report not ready");
+    if (!config.reportsDir) return sendError(res, 500, "INTERNAL", "reports dir not configured");
+
+    // 防御纵深：记账可能过期，最终属主判定以网关为准
+    let confirmed: GatewayResponse;
+    try {
+      confirmed = await gateway.request("GET", `/api/tasks/${encodeURIComponent(runId)}`, { user });
+    } catch (err) {
+      if (!(err instanceof GatewayUnreachableError)) throw err;
+      return sendError(res, 502, "BAD_GATEWAY", "engine unreachable");
+    }
+    if (confirmed.status !== 200) return passThrough(res, confirmed); // 403/404 透传拒绝
+
+    const root = resolve(config.reportsDir);
+    const full = resolve(root, msg.report_path);
+    if (full !== root && !full.startsWith(root + sep)) {
+      console.error(`[reports] 路径越界拒绝 run_id=${runId} path=${msg.report_path}`); // 细节只进服务端日志
+      return sendError(res, 404, "NOT_FOUND", "report not found");
+    }
+    let html: Buffer;
+    try {
+      html = readFileSync(full);
+    } catch {
+      return sendError(res, 404, "NOT_FOUND", "report not found");
+    }
+
+    res.status(200)
+      .set("Content-Type", "text/html; charset=utf-8")
+      .set("X-Content-Type-Options", "nosniff")
+      .set(
+        "Content-Security-Policy",
+        "default-src 'none'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self'; img-src 'self' data:; font-src 'self' data:",
+      );
+    if (req.query.download === "1") {
+      const name = basename(full).replace(/[^\w.\-]+/g, "_") || "report.html";
+      res.set("Content-Disposition", `attachment; filename="${name}"`);
+    }
+    res.end(html);
   });
 
   // ── 尾部兜底：未匹配路由 404；异常归一封闭集（Express 默认 HTML 错误页不出网）──────────

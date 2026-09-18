@@ -3,7 +3,9 @@
 //   PORT          监听端口（默认 58090）
 //   GATEWAY_URL   engine-gateway 地址（默认 http://127.0.0.1:58080，同机部署）
 //   AUTH_TOKEN    网关 Bearer（必填，缺省拒绝启动——空 token 等于不设防；只进本进程 env）
+//   REPORTS_DIR   报告根目录（UI-T7 必填：与网关 GATEWAY_REPORTS_DIR 同机只读访问）
 //   DATA_DIR      SQLite 记账目录（默认 ./data）
+import { resolve } from "node:path";
 import { BffStore, initDb } from "./db.ts";
 import { createApp } from "./app.ts";
 
@@ -18,6 +20,7 @@ const store = new BffStore(initDb(process.env.DATA_DIR || "./data"));
 const app = createApp(store, {
   gatewayUrl: process.env.GATEWAY_URL || "http://127.0.0.1:58080",
   authToken: requiredEnv("AUTH_TOKEN"),
+  reportsDir: resolve(requiredEnv("REPORTS_DIR")),
 });
 
 app.listen(port, "127.0.0.1", () => {
