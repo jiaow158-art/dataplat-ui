@@ -1,5 +1,5 @@
-// UI-T2/T3：BFF 应用装配 —— 会话门禁 + 账号/Ui 会话路由 + 网关反代（spec §3 认证、§4 API 面）。
-// SSE 代理（/api/tasks/:id/events）在 UI-T4 增补。
+// UI-T2/T3/T4：BFF 应用装配 —— 会话门禁 + 账号/Ui 会话路由 + 网关反代 + SSE 代理
+// （spec §3 认证、§4 API 面、契约 §4 SSE 语义）。
 //
 // 身份信任链（契约 §1）：浏览器只信 cookie；req.user 一律由会话门禁从 sessions 表解析注入，
 // 绝不读请求体/请求头里的用户自报值——它是反代网关时 X-User 的唯一来源（红线）。
@@ -7,8 +7,10 @@
 import express, { type Express, type Request, type Response } from "express";
 import { compare, hashSync } from "bcryptjs";
 import { randomBytes, randomUUID } from "node:crypto";
+import type { IncomingMessage } from "node:http";
 import type { BffStore } from "./db.ts";
 import { GatewayClient, GatewayUnreachableError, type GatewayResponse } from "./gateway.ts";
+import { SseFrameParser, type SseEvent } from "./sse-parser.ts";
 
 declare module "express-serve-static-core" {
   interface Request {
@@ -242,6 +244,83 @@ export function createApp(store: BffStore, config: BffConfig): Express {
   };
   app.get("/api/tasks/:id", proxyTask);
   app.get("/api/tasks/:id/status", proxyTask);
+
+  // ── SSE 代理（契约 §4）：浏览器 EventSource 不能设自定义头 → 必须经 BFF 换登录态 ────
+  // Last-Event-ID 头（EventSource 重连自动带）与 ?after= 查询参原样透传，BFF 不解释——
+  // 补发/不重不漏语义全在网关。透传是 chunk 级字节管道（禁聚合禁缓冲），记账只是旁路。
+
+  /** 记账旁路（契约 §6 词表子集）：answer/report/done 落 messages 行。 */
+  const recordMessageEvent = (runId: string, ev: SseEvent): void => {
+    const p = (ev.payload ?? {}) as Record<string, unknown>;
+    if (ev.type === "answer" && typeof p.markdown === "string") store.updateMessageAnswer(runId, p.markdown);
+    else if (ev.type === "report" && typeof p.path === "string") store.updateMessageReport(runId, p.path);
+    else if (ev.type === "done" && typeof p.status === "string") store.updateMessageStatus(runId, p.status);
+  };
+
+  app.get("/api/tasks/:id/events", async (req, res) => {
+    const user = req.user!;
+    const runId = req.params.id;
+    const qIdx = req.originalUrl.indexOf("?");
+    const qs = qIdx >= 0 ? req.originalUrl.slice(qIdx) : "";
+    const lastEventId = req.headers["last-event-id"];
+    const upstreamHeaders: Record<string, string> =
+      typeof lastEventId === "string" && lastEventId ? { "last-event-id": lastEventId } : {};
+
+    let stream: { response: IncomingMessage; abort: () => void };
+    try {
+      stream = await gateway.openStream(`/api/tasks/${encodeURIComponent(runId)}/events${qs}`, {
+        user,
+        headers: upstreamHeaders,
+      });
+    } catch (err) {
+      if (!(err instanceof GatewayUnreachableError)) throw err;
+      return sendError(res, 502, "BAD_GATEWAY", "engine unreachable");
+    }
+    const upstream = stream.response;
+
+    // 上游非 200（403 属主拒/404）：小 JSON 错误体，读全量透传
+    if (upstream.statusCode !== 200) {
+      const chunks: Buffer[] = [];
+      upstream.on("data", (c: Buffer) => chunks.push(c));
+      upstream.on("error", () => {
+        if (!res.writableEnded) res.end();
+      });
+      upstream.on("end", () => {
+        res
+          .status(upstream.statusCode ?? 502)
+          .set("Content-Type", String(upstream.headers["content-type"] ?? "application/json"))
+          .end(Buffer.concat(chunks));
+      });
+      return;
+    }
+
+    // 立即开流：头先到、每个 chunk 即刻下发（pipe 无聚合；心跳行帮中间层保活）
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    });
+    res.flushHeaders();
+
+    const parser = new SseFrameParser();
+    upstream.on("data", (chunk: Buffer) => {
+      try {
+        for (const ev of parser.feed(chunk)) recordMessageEvent(runId, ev);
+      } catch (err) {
+        console.error(`[sse] 记账失败 run_id=${runId}:`, err); // 记账绝不影响透传流
+      }
+    });
+    upstream.pipe(res); // 逐 chunk 写出 + 背压；上游 end → res.end()（done 后关流语义）
+    upstream.on("error", (err) => {
+      console.error(`[sse] 上游流异常 run_id=${runId}:`, err);
+      stream.abort();
+      if (!res.writableEnded) res.end(); // 客户端按 seq 重连恢复（D15）
+    });
+    // 客户端断开 → 销毁上游连接（上游未结束时才有意义）
+    res.on("close", () => {
+      if (!upstream.readableEnded) stream.abort();
+    });
+  });
 
   // ── 尾部兜底：未匹配路由 404；异常归一封闭集（Express 默认 HTML 错误页不出网）──────────
   app.use((req, res) => sendError(res, 404, "NOT_FOUND", "no such route"));
