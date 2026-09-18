@@ -1,122 +1,72 @@
-import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import './App.css'
+// UI-T5 应用根：启动探测 /api/me（401→登录屏，200→直接进主页）+ 登录/登出状态机。
+// v1 无路由库：两屏（登录/主页）由 boot 状态切换；/report 预览壳在 main.tsx 分流（UI-T7）。
+import { useCallback, useEffect, useState } from "react";
+import { ApiError, apiCreateSession, apiListSessions, apiLogout, apiMe } from "./api";
+import type { UiSession } from "./types";
+import LoginScreen from "./components/LoginScreen";
+import Sidebar from "./components/Sidebar";
+import ChatView from "./components/ChatView";
 
-function App() {
-  const [count, setCount] = useState(0)
+type Boot = { kind: "loading" } | { kind: "login" } | { kind: "ready"; username: string };
+
+export default function App() {
+  const [boot, setBoot] = useState<Boot>({ kind: "loading" });
+  const [sessions, setSessions] = useState<UiSession[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+
+  const enter = useCallback(async (username: string) => {
+    setSessions(await apiListSessions());
+    setActiveId(null); // 进入时停在新会话态（首问自动建会话，UI-T6）
+    setBoot({ kind: "ready", username });
+  }, []);
+
+  useEffect(() => {
+    apiMe()
+      .then((u) => enter(u.username))
+      .catch(() => setBoot({ kind: "login" })); // 401/网络错 → 登录屏
+  }, [enter]);
+
+  const refreshSessions = useCallback(async () => {
+    setSessions(await apiListSessions());
+  }, []);
+
+  if (boot.kind === "loading") {
+    return (
+      <div className="flex h-full items-center justify-center bg-base text-sm text-ink-3">加载中…</div>
+    );
+  }
+  if (boot.kind === "login") {
+    return <LoginScreen onSuccess={enter} />;
+  }
+
+  const active = sessions.find((s) => s.id === activeId) ?? null;
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+    <div className="flex h-full">
+      <Sidebar
+        username={boot.username}
+        sessions={sessions}
+        activeId={activeId}
+        onSelect={setActiveId}
+        onNew={async () => {
+          const s = await apiCreateSession();
+          await refreshSessions();
+          setActiveId(s.id); // 建带默认标题的空会话并选中；不选 = 首问自动建（UI-T6）
+        }}
+        onChanged={refreshSessions}
+        onActiveDeleted={() => setActiveId(null)}
+        onLogout={async () => {
+          try {
+            await apiLogout();
+          } catch (err) {
+            if (!(err instanceof ApiError)) throw err; // 网络层异常上抛；401 也视作已登出
+          }
+          setSessions([]);
+          setActiveId(null);
+          setBoot({ kind: "login" });
+        }}
+      />
+      <ChatView session={active} />
+    </div>
+  );
 }
-
-export default App
