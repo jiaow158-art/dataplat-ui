@@ -1,13 +1,14 @@
-// UI-T2：BFF 应用装配 —— 会话门禁 + 账号/Ui 会话路由（spec §3 认证、§4 API 面）。
-// 网关反代（/api/ask、/api/tasks*、SSE）在 UI-T3/T4 增补。
+// UI-T2/T3：BFF 应用装配 —— 会话门禁 + 账号/Ui 会话路由 + 网关反代（spec §3 认证、§4 API 面）。
+// SSE 代理（/api/tasks/:id/events）在 UI-T4 增补。
 //
 // 身份信任链（契约 §1）：浏览器只信 cookie；req.user 一律由会话门禁从 sessions 表解析注入，
 // 绝不读请求体/请求头里的用户自报值——它是反代网关时 X-User 的唯一来源（红线）。
 // 错误响应唯一出口 sendError：code/message 封闭集字面量（对齐网关 http.ts 约定）。
 import express, { type Express, type Request, type Response } from "express";
 import { compare, hashSync } from "bcryptjs";
-import { randomBytes, randomUUID } from "node:crypto"; // randomUUID 供 UI-T3 client_submission_id
+import { randomBytes, randomUUID } from "node:crypto";
 import type { BffStore } from "./db.ts";
+import { GatewayClient, GatewayUnreachableError, type GatewayResponse } from "./gateway.ts";
 
 declare module "express-serve-static-core" {
   interface Request {
@@ -78,6 +79,7 @@ export function createApp(store: BffStore, config: BffConfig): Express {
   app.use(express.json({ limit: "1mb" }));
   const loginLimiter = new SlidingWindowLimiter(config.loginRatePerMin ?? 5);
   const loginMinFailMs = config.loginMinFailMs ?? 400;
+  const gateway = new GatewayClient(config.gatewayUrl, config.authToken);
 
   // 探活免鉴权（对齐网关：只报 ok，无任务数据）
   app.get("/api/health", (_req, res) => {
@@ -167,6 +169,79 @@ export function createApp(store: BffStore, config: BffConfig): Express {
     store.deleteUiSession(s.id);
     res.status(204).end();
   });
+
+  // ── 网关反代（契约 §2）：X-User/Bearer 注入 + 响应透传 ──────────────────────────────
+
+  /** 网关 JSON 响应透传：状态与体原样（429 两种含义、403 属主拒等文案区分靠网关 message）。 */
+  function passThrough(res: Response, r: GatewayResponse): void {
+    res.status(r.status).set("Content-Type", String(r.headers["content-type"] ?? "application/json")).end(r.body);
+  }
+
+  // POST /api/ask {question, ui_session_id?}（spec §4）：生成契约级幂等键 → 转发网关 → 记账
+  app.post("/api/ask", async (req, res) => {
+    const user = req.user!;
+    const body = (req.body ?? {}) as { question?: unknown; ui_session_id?: unknown };
+    if (typeof body.question !== "string" || !body.question.trim()) {
+      return sendError(res, 400, "BAD_REQUEST", "question is required");
+    }
+    let uiSessionId: string | undefined;
+    if (body.ui_session_id !== undefined) {
+      if (typeof body.ui_session_id !== "string") {
+        return sendError(res, 400, "BAD_REQUEST", "ui_session_id must be a string");
+      }
+      const s = store.getUiSession(body.ui_session_id);
+      if (!s || s.username !== user) return sendError(res, 404, "NOT_FOUND", "session not found");
+      uiSessionId = s.id;
+    }
+
+    // 幂等键（契约 §5 强制）：<user>-<uuid>——user 段封闭跨用户命名空间
+    const gwBody: Record<string, string> = {
+      question: body.question,
+      client_submission_id: `${user}-${randomUUID()}`,
+    };
+    const followUp = uiSessionId ? store.latestGatewaySessionId(uiSessionId) : null;
+    if (followUp) gwBody.session_id = followUp; // 追问（D14：历史注入在网关侧，BFF 零参与）
+
+    let r: GatewayResponse;
+    try {
+      r = await gateway.request("POST", "/api/tasks", { user, body: gwBody });
+    } catch (err) {
+      if (!(err instanceof GatewayUnreachableError)) throw err;
+      return sendError(res, 502, "BAD_GATEWAY", "engine unreachable");
+    }
+    if (r.status !== 201) return passThrough(res, r); // 400/401/429 原样透传
+
+    const created = JSON.parse(r.body.toString("utf8")) as { run_id?: string; session_id?: string };
+    if (typeof created.run_id !== "string" || typeof created.session_id !== "string") {
+      return sendError(res, 502, "BAD_GATEWAY", "invalid gateway response");
+    }
+    if (!uiSessionId) {
+      uiSessionId = store.createUiSession(user, Array.from(body.question.trim()).slice(0, 30).join("")).id;
+    } else {
+      store.touchUiSession(uiSessionId);
+    }
+    store.insertMessage({
+      uiSessionId,
+      runId: created.run_id,
+      gatewaySessionId: created.session_id,
+      question: body.question,
+    });
+    res.status(201).json({ run_id: created.run_id, session_id: created.session_id, ui_session_id: uiSessionId });
+  });
+
+  // GET /api/tasks/:id（与轮询别名 /status）：以登录身份反代网关任务状态。
+  // 403/404 透传——任务属主校验由网关完成（属主≠X-User 网关回 403）。
+  const proxyTask = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const r = await gateway.request("GET", `/api/tasks/${encodeURIComponent(req.params.id)}`, { user: req.user! });
+      return passThrough(res, r);
+    } catch (err) {
+      if (!(err instanceof GatewayUnreachableError)) throw err;
+      return sendError(res, 502, "BAD_GATEWAY", "engine unreachable");
+    }
+  };
+  app.get("/api/tasks/:id", proxyTask);
+  app.get("/api/tasks/:id/status", proxyTask);
 
   // ── 尾部兜底：未匹配路由 404；异常归一封闭集（Express 默认 HTML 错误页不出网）──────────
   app.use((req, res) => sendError(res, 404, "NOT_FOUND", "no such route"));
