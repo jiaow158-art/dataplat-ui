@@ -66,7 +66,15 @@ export default function App() {
           setBoot({ kind: "login" });
         }}
       />
-      <ChatView session={active} />
+      <ChatView
+        sessionId={active?.id ?? null}
+        sessionTitle={active?.title ?? "新会话"}
+        onFirstAsk={(id) => {
+          setActiveId(id); // 首问成功：BFF 已自动建会话（标题=首问前 30 字），切入并刷列表
+          void refreshSessions();
+        }}
+        onSessionActivity={() => void refreshSessions()}
+      />
     </div>
   );
 }

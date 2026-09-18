@@ -55,3 +55,111 @@ body {
 *::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* 回答正文 markdown 排版（经 rehype-sanitize 白名单后的受控标签集） */
+.md-body {
+  font-size: 0.875rem;
+  line-height: 1.75;
+  color: var(--color-ink);
+  overflow-wrap: break-word;
+}
+.md-body > :first-child {
+  margin-top: 0;
+}
+.md-body > :last-child {
+  margin-bottom: 0;
+}
+.md-body h1,
+.md-body h2,
+.md-body h3,
+.md-body h4 {
+  font-weight: 600;
+  color: var(--color-ink);
+  margin: 1.1em 0 0.45em;
+  line-height: 1.35;
+}
+.md-body h1 {
+  font-size: 1.15rem;
+}
+.md-body h2 {
+  font-size: 1.05rem;
+}
+.md-body h3,
+.md-body h4 {
+  font-size: 0.95rem;
+}
+.md-body p {
+  margin: 0.5em 0;
+}
+.md-body ul,
+.md-body ol {
+  margin: 0.5em 0;
+  padding-left: 1.4em;
+}
+.md-body ul {
+  list-style: disc;
+}
+.md-body ol {
+  list-style: decimal;
+}
+.md-body li {
+  margin: 0.2em 0;
+}
+.md-body a {
+  color: var(--color-accent-2);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.md-body code {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.82em;
+  background: var(--color-lift);
+  border: 1px solid var(--color-line);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+  color: var(--color-accent-2);
+}
+.md-body pre {
+  background: var(--color-base);
+  border: 1px solid var(--color-line);
+  border-radius: 6px;
+  padding: 0.75rem 0.9rem;
+  overflow-x: auto;
+  margin: 0.6em 0;
+}
+.md-body pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-ink-2);
+  font-size: 0.8rem;
+}
+.md-body blockquote {
+  border-left: 2px solid var(--color-accent);
+  padding-left: 0.9em;
+  margin: 0.6em 0;
+  color: var(--color-ink-2);
+}
+.md-body table {
+  border-collapse: collapse;
+  margin: 0.7em 0;
+  font-size: 0.82rem;
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.md-body th,
+.md-body td {
+  border: 1px solid var(--color-line);
+  padding: 0.3em 0.7em;
+  text-align: left;
+}
+.md-body th {
+  background: var(--color-lift);
+  font-weight: 600;
+}
+.md-body hr {
+  border: none;
+  border-top: 1px solid var(--color-line);
+  margin: 1em 0;
+}
