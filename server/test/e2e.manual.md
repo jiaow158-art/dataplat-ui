@@ -1,5 +1,7 @@
 # UI-T8 E2E 验收记录（真网关，2026-09-18）
 
+> **用户上手验收：通过（2026-09-18，"我测试过了，没啥毛病"）**——机器 E2E 9/9 + 人工全回路走查双确认。
+
 > 环境：engine-gateway 58080（manual-token 台，真 dsh/DeepSeek/DWS）+ 本 BFF 58090（DATA_DIR=./data，REPORTS_DIR 同网关报告根）。
 > 前置：`npm run admin:add tester-a` / `tester-b` 两账号。
 
