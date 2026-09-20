@@ -1,6 +1,18 @@
 // BFF API 客户端：fetch 封装。浏览器只信 cookie（红线：全前端无任何 token 概念）；
 // 错误统一归一为 ApiError{status, code, message}（BFF 错误体 {error:{code,message}} 封闭集）。
-import type { AskResult, MessageRow, TaskStatus, UiSession } from "./types";
+import type {
+  AdminAuditOpRow,
+  AdminUserRow,
+  AskResult,
+  AuditDateResult,
+  AuditRunResult,
+  AuditUserResult,
+  MeInfo,
+  MessageRow,
+  StatsResult,
+  TaskStatus,
+  UiSession,
+} from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -42,7 +54,7 @@ async function api<T>(method: string, path: string, body?: unknown): Promise<T> 
 
 // ── 账号会话 ──────────────────────────────────────────────────────────────────────
 
-export const apiMe = () => api<{ username: string }>("GET", "/api/me");
+export const apiMe = () => api<MeInfo>("GET", "/api/me");
 export const apiLogin = (username: string, password: string) =>
   api<{ username: string }>("POST", "/api/auth/login", { username, password });
 export const apiLogout = () => api<void>("POST", "/api/auth/logout");
@@ -64,3 +76,27 @@ export const apiListMessages = (uiSessionId: string) =>
   api<MessageRow[]>("GET", `/api/sessions/${encodeURIComponent(uiSessionId)}/messages`);
 export const apiTaskStatus = (runId: string) =>
   api<TaskStatus>("GET", `/api/tasks/${encodeURIComponent(runId)}/status`);
+
+// ── 管理后台（M4-B2/B3/B4；cookie 会话 + BFF 侧 admin 守卫） ────────────────────────
+
+export const apiAdminUsers = () => api<AdminUserRow[]>("GET", "/api/admin/users");
+export const apiAdminCreateUser = (username: string, password: string, isAdmin: boolean) =>
+  api<AdminUserRow>("POST", "/api/admin/users", { username, password, is_admin: isAdmin });
+export const apiAdminResetPassword = (username: string, password: string) =>
+  api<{ username: string }>("POST", `/api/admin/users/${encodeURIComponent(username)}/reset-password`, { password });
+export const apiAdminSetDisabled = (username: string, disabled: boolean) =>
+  api<AdminUserRow>("POST", `/api/admin/users/${encodeURIComponent(username)}/${disabled ? "disable" : "enable"}`);
+export const apiAdminAuditOps = (limit = 50) =>
+  api<AdminAuditOpRow[]>("GET", `/api/admin/audit-ops?limit=${limit}`);
+export const apiAdminAuditUser = (name: string, since?: string) =>
+  api<AuditUserResult>(
+    "GET",
+    `/api/admin/audit/user?name=${encodeURIComponent(name)}${since ? `&since=${since}` : ""}`,
+  );
+export const apiAdminAuditRun = (runId: string) =>
+  api<AuditRunResult>("GET", `/api/admin/audit/run/${encodeURIComponent(runId)}`);
+export const apiAdminAuditDate = (date: string) =>
+  api<AuditDateResult>("GET", `/api/admin/audit/date?date=${encodeURIComponent(date)}`);
+export const apiAdminStats = () => api<StatsResult>("GET", "/api/admin/stats");
+export const apiAdminSuggest = (q: string) =>
+  api<{ users: string[]; run_ids: string[] }>("GET", `/api/admin/audit/suggest?q=${encodeURIComponent(q)}`);

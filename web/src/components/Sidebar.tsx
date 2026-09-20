@@ -8,6 +8,8 @@ interface SidebarProps {
   username: string;
   sessions: UiSession[];
   activeId: string | null;
+  isAdmin: boolean; // M4：仅管理员渲染"管理后台"入口
+  onAdmin: () => void;
   onSelect: (id: string) => void;
   onNew: () => Promise<void>; // 父级建会话并刷新列表后进入空对话态
   onChanged: () => Promise<void>; // 重命名/删除后刷新列表
@@ -160,6 +162,18 @@ export default function Sidebar(props: SidebarProps) {
       </nav>
 
       {error && <div className="mx-3 mb-2 text-xs text-bad">{error}</div>}
+
+      {props.isAdmin && (
+        <div className="border-t border-line px-3 py-2">
+          <button
+            type="button"
+            className="w-full rounded border border-line-strong bg-card py-1.5 text-xs text-ink-2 transition-colors hover:border-accent hover:text-ink"
+            onClick={props.onAdmin}
+          >
+            管理后台
+          </button>
+        </div>
+      )}
 
       <div className="flex items-center justify-between border-t border-line px-4 py-3">
         <span className="truncate text-xs text-ink-2" title={username}>
