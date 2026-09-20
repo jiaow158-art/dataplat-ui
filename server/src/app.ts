@@ -126,21 +126,61 @@ export function createApp(store: BffStore, config: BffConfig): Express {
       return sendError(res, 401, "UNAUTHORIZED", "invalid username or password");
     }
     const token = randomBytes(16).toString("hex"); // 128bit 随机
-    store.pruneExpiredSessions(Date.now());
-    store.createSession(token, username, Date.now() + SESSION_TTL_MS);
+    const now = Date.now();
+    store.pruneExpiredSessions(now);
+    store.createSession(token, username, now + SESSION_TTL_MS);
+    store.recordLogin(username, token.slice(0, 6), now, now + SESSION_TTL_MS); // M4-B6 旁路记账
     res.cookie(SESSION_COOKIE, token, { httpOnly: true, sameSite: "lax", path: "/", maxAge: SESSION_TTL_MS });
     res.json({ username });
   });
 
   app.post("/api/auth/logout", (req, res) => {
     const token = parseCookies(req.headers.cookie)[SESSION_COOKIE];
-    if (token) store.deleteSession(token);
+    if (token) {
+      store.deleteSession(token); // 存量语义不动：删 sessions 行（立即可吊销）
+      store.markLogout(token, Date.now()); // M4-B6 旁路：login_log 终态（行保留）
+    }
     res.clearCookie(SESSION_COOKIE, { path: "/" });
     res.status(204).end();
   });
 
   app.get("/api/me", (req, res) => {
     res.json({ username: req.user });
+  });
+
+  // ── 管理后台 v1（M4-B1/B5/B6）：会话门禁之上叠 admin 守卫 ──────────────────────────
+  // 身份仍取自 sessions 解析出的 req.user（信任链不变），再查 users.is_admin 判角色。
+
+  /** 查询 limit：缺省 50；正整数 1..500，否则 400（封闭集）。 */
+  const parseLimit = (raw: unknown): number | null => {
+    if (raw === undefined) return 50;
+    if (typeof raw !== "string" || !/^\d+$/.test(raw)) return null;
+    const n = Number(raw);
+    return n >= 1 && n <= 500 ? n : null;
+  };
+
+  app.use("/api/admin", (req, res, next) => {
+    const u = store.getUser(req.user!);
+    if (!u?.is_admin) return sendError(res, 403, "FORBIDDEN", "admin only");
+    next();
+  });
+
+  // 管理操作留痕查询（B5——B2 界面的数据源；CLI 与程序化入口写入）
+  app.get("/api/admin/audit-ops", (req, res) => {
+    const limit = parseLimit(req.query.limit);
+    if (limit === null) return sendError(res, 400, "BAD_REQUEST", "limit must be an integer between 1 and 500");
+    res.json(store.listAdminAudit(limit));
+  });
+
+  // 登录史查询（B6 旁路记账的读取面；logout_at NULL=存活/超时）
+  app.get("/api/admin/logins", (req, res) => {
+    const limit = parseLimit(req.query.limit);
+    if (limit === null) return sendError(res, 400, "BAD_REQUEST", "limit must be an integer between 1 and 500");
+    const user = req.query.user;
+    if (user !== undefined && (typeof user !== "string" || !user)) {
+      return sendError(res, 400, "BAD_REQUEST", "user must be a non-empty string");
+    }
+    res.json(store.listLogins(typeof user === "string" ? user : undefined, limit));
   });
 
   // ── UI 会话 CRUD（spec §4：BFF 记账表；只能操作自己的——非本人/不存在统一 404 不泄露存在性）──

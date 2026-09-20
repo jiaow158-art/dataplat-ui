@@ -3,6 +3,7 @@
 CREATE TABLE IF NOT EXISTS users (
   username TEXT PRIMARY KEY,
   password_hash TEXT NOT NULL,          -- bcryptjs（纯 JS，免 Windows 原生编译）
+  is_admin INTEGER NOT NULL DEFAULT 0,  -- M4-B1 角色标记位（0=普通 1=管理员；旧库由 initDb 补列）
   created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS sessions (   -- 登录会话（服务端可吊销；cookie 只存 token）
@@ -32,3 +33,21 @@ CREATE TABLE IF NOT EXISTS messages (   -- 每次提问一行：run_id 关联网
 );
 CREATE INDEX IF NOT EXISTS idx_messages_ui_session ON messages(ui_session_id, created_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_run ON messages(run_id);
+CREATE TABLE IF NOT EXISTS admin_audit ( -- M4-B5 管理操作留痕（CLI 与 B2 程序化入口都写；只增不删）
+  id TEXT PRIMARY KEY,                  -- aa-<uuid>
+  username TEXT NOT NULL,               -- 操作者（CLI 记 "<cli>"）
+  action TEXT NOT NULL,                 -- user_create|user_disable|user_enable|password_reset|grant_admin|revoke_admin
+  target TEXT NOT NULL,                 -- 被操作账号
+  detail TEXT,                          -- 补充说明（如 is_admin 0→1）；绝不写凭据
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit(created_at);
+CREATE TABLE IF NOT EXISTS login_log (  -- M4-B6 登录记账（旁路：不动 sessions 语义；logout_at NULL=存活/超时）
+  id TEXT PRIMARY KEY,                  -- ll-<uuid>
+  username TEXT NOT NULL,
+  token_prefix TEXT NOT NULL,           -- token 前 6 位（对齐网关 audit.mjs maskToken——不存全 token）
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  logout_at INTEGER                     -- 登出时刻；未登出（存活或超时）保持 NULL
+);
+CREATE INDEX IF NOT EXISTS idx_login_log_user ON login_log(username, created_at);

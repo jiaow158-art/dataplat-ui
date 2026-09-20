@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 export interface UserRow {
   username: string;
   password_hash: string;
+  is_admin: number;
   created_at: number;
 }
 
@@ -47,6 +48,33 @@ export interface InsertMessageInput {
   question: string;
 }
 
+export interface LoginLogRow {
+  id: string;
+  username: string;
+  token_prefix: string;
+  created_at: number;
+  expires_at: number;
+  logout_at: number | null;
+}
+
+/** M4-B5 留痕动作封闭集（user_disable/user_enable 为 B2 用户管理页预留）。 */
+export type AdminAuditAction =
+  | "user_create"
+  | "user_disable"
+  | "user_enable"
+  | "password_reset"
+  | "grant_admin"
+  | "revoke_admin";
+
+export interface AdminAuditRow {
+  id: string;
+  username: string;
+  action: AdminAuditAction;
+  target: string;
+  detail: string | null;
+  created_at: number;
+}
+
 /** 建库：DATA_DIR 下 bff.db，WAL 断言（对齐网关 src/server/index.ts 的启动围栏）。 */
 export function initDb(dataDir: string): Database.Database {
   mkdirSync(dataDir, { recursive: true });
@@ -58,6 +86,12 @@ export function initDb(dataDir: string): Database.Database {
     throw new Error(`[CONFIG] WAL 未生效（journal_mode=${journalMode}）——网络盘/旧文件系统会丢并发写，拒绝启动`);
   }
   db.exec(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "schema.sql"), "utf8"));
+  // M4-B1：旧库补列（SQLite 的 ADD COLUMN 无 IF NOT EXISTS——pragma 检测后 ALTER，幂等；
+  // 新库由 schema.sql 直接带上该列，此处自然跳过）。
+  const userCols = db.prepare("PRAGMA table_info(users)").all() as { name: string }[];
+  if (!userCols.some((c) => c.name === "is_admin")) {
+    db.exec("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0");
+  }
   return db;
 }
 
@@ -72,20 +106,52 @@ export class BffStore {
 
   // ---------- 账号（admin CLI 写，登录读） ----------
 
-  /** upsert 账号；返回是否新建（false = 改密）。 */
-  upsertUser(username: string, passwordHash: string): boolean {
+  /** upsert 账号；返回是否新建（false = 改密）。opts.isAdmin 建号/改密时置角色；不传则不动角色。 */
+  upsertUser(username: string, passwordHash: string, opts?: { isAdmin?: boolean }): boolean {
     const created = this.getUser(username) === undefined;
-    this.db
-      .prepare(
-        `INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)
-         ON CONFLICT(username) DO UPDATE SET password_hash = excluded.password_hash`,
-      )
-      .run(username, passwordHash, this.now());
+    if (created) {
+      this.db
+        .prepare("INSERT INTO users (username, password_hash, is_admin, created_at) VALUES (?, ?, ?, ?)")
+        .run(username, passwordHash, opts?.isAdmin ? 1 : 0, this.now());
+    } else if (opts?.isAdmin !== undefined) {
+      this.db
+        .prepare("UPDATE users SET password_hash = ?, is_admin = ? WHERE username = ?")
+        .run(passwordHash, opts.isAdmin ? 1 : 0, username);
+    } else {
+      this.db.prepare("UPDATE users SET password_hash = ? WHERE username = ?").run(passwordHash, username);
+    }
     return created;
   }
 
   getUser(username: string): UserRow | undefined {
     return this.db.prepare("SELECT * FROM users WHERE username = ?").get(username) as UserRow | undefined;
+  }
+
+  /** M4-B1 角色翻转（admin:grant 用）；返回用户是否存在。 */
+  setAdmin(username: string, isAdmin: boolean): boolean {
+    return this.db.prepare("UPDATE users SET is_admin = ? WHERE username = ?").run(isAdmin ? 1 : 0, username).changes > 0;
+  }
+
+  // ---------- 管理操作留痕（M4-B5：CLI 与 B2 程序化入口都经此处落账） ----------
+
+  insertAdminAudit(entry: { username: string; action: AdminAuditAction; target: string; detail?: string }): AdminAuditRow {
+    const row: AdminAuditRow = {
+      id: `aa-${randomUUID()}`,
+      username: entry.username,
+      action: entry.action,
+      target: entry.target,
+      detail: entry.detail ?? null,
+      created_at: this.now(),
+    };
+    this.db
+      .prepare("INSERT INTO admin_audit (id, username, action, target, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(row.id, row.username, row.action, row.target, row.detail, row.created_at);
+    return row;
+  }
+
+  /** 管理操作留痕查询（B2 界面用）：新到旧。 */
+  listAdminAudit(limit: number): AdminAuditRow[] {
+    return this.db.prepare("SELECT * FROM admin_audit ORDER BY created_at DESC, rowid DESC LIMIT ?").all(limit) as AdminAuditRow[];
   }
 
   // ---------- 登录会话 ----------
@@ -105,6 +171,34 @@ export class BffStore {
   /** 顺手清掉已过期行（登录时调用，免单开清扫任务）。 */
   pruneExpiredSessions(now: number): number {
     return this.db.prepare("DELETE FROM sessions WHERE expires_at < ?").run(now).changes;
+  }
+
+  // ---------- 登录记账（M4-B6 旁路：不动 sessions 语义） ----------
+
+  /** 登录成功写一行（token_prefix=token 前 6 位——不存全 token，对齐网关 audit.mjs 惯例）。 */
+  recordLogin(username: string, tokenPrefix: string, createdAt: number, expiresAt: number): void {
+    this.db
+      .prepare("INSERT INTO login_log (id, username, token_prefix, created_at, expires_at) VALUES (?, ?, ?, ?, ?)")
+      .run(`ll-${randomUUID()}`, username, tokenPrefix, createdAt, expiresAt);
+  }
+
+  /** 登出终态：按 token 前缀定位最近一行未登出记录置 logout_at（未命中返回 false——行可能已被置终态）。 */
+  markLogout(token: string, at: number): boolean {
+    return this.db
+      .prepare(
+        `UPDATE login_log SET logout_at = ?
+         WHERE id = (SELECT id FROM login_log WHERE token_prefix = ? AND logout_at IS NULL
+                     ORDER BY created_at DESC, rowid DESC LIMIT 1)`,
+      )
+      .run(at, token.slice(0, 6)).changes > 0;
+  }
+
+  /** 登录史查询（管理员端点用）：可选按用户过滤，新到旧。 */
+  listLogins(user: string | undefined, limit: number): LoginLogRow[] {
+    const sql = user
+      ? "SELECT * FROM login_log WHERE username = ? ORDER BY created_at DESC, rowid DESC LIMIT ?"
+      : "SELECT * FROM login_log ORDER BY created_at DESC, rowid DESC LIMIT ?";
+    return (user ? this.db.prepare(sql).all(user, limit) : this.db.prepare(sql).all(limit)) as LoginLogRow[];
   }
 
   // ---------- UI 会话（spec §4：标题=首问前 30 字，可重命名） ----------
