@@ -80,7 +80,9 @@ export interface BffHandle {
   close(): Promise<void>;
 }
 
-export async function startBff(opts: { gatewayUrl?: string; reportsDir?: string } = {}): Promise<BffHandle> {
+export async function startBff(
+  opts: { gatewayUrl?: string; reportsDir?: string; staticDir?: string } = {},
+): Promise<BffHandle> {
   const root = mkdtempSync(join(tmpdir(), "bff-test-"));
   const db = initDb(root);
   const store = new BffStore(db);
@@ -88,6 +90,7 @@ export async function startBff(opts: { gatewayUrl?: string; reportsDir?: string 
     gatewayUrl: opts.gatewayUrl ?? "http://127.0.0.1:1", // 缺省指向必然不可达端口（Task2 不触网关）
     authToken: GATEWAY_TOKEN,
     reportsDir: opts.reportsDir, // UI-T7 报告静态服务根目录（不传 = 端点 500）
+    staticDir: opts.staticDir, // M3-T1 静态托管（不传 = 无托管，原行为）
   });
   const server = app.listen(0, "127.0.0.1");
   const port = await new Promise<number>((resolve, reject) => {

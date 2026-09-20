@@ -8,7 +8,7 @@ import express, { type Express, type Request, type Response } from "express";
 import { compare, hashSync } from "bcryptjs";
 import { randomBytes, randomUUID } from "node:crypto";
 import type { IncomingMessage } from "node:http";
-import { basename, resolve, sep } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 import { readFileSync } from "node:fs";
 import type { BffStore } from "./db.ts";
 import { GatewayClient, GatewayUnreachableError, type GatewayResponse } from "./gateway.ts";
@@ -27,6 +27,8 @@ export interface BffConfig {
   authToken: string;
   /** 报告根目录（UI-T7）：与网关 GATEWAY_REPORTS_DIR 同机只读；缺省时 /api/reports 回 500。 */
   reportsDir?: string;
+  /** web/ 构建产物目录（M3-T1 方案A 静态托管）：配置时由 BFF 托管前端 + SPA fallback。 */
+  staticDir?: string;
   /** 登录失败人为慢响应下限 ms（spec §6.5 防爆破计时，默认 400）。 */
   loginMinFailMs?: number;
   /** 同用户名登录尝试上限（次/分钟，默认 5）。 */
@@ -386,6 +388,16 @@ export function createApp(store: BffStore, config: BffConfig): Express {
     }
     res.end(html);
   });
+
+  // ── 前端静态托管（M3-T1 方案A）：web/ 构建产物 dist 由本端口直出 + SPA fallback ──────
+  // 静态壳与资源不走会话门禁（登录页本身要能加载；数据面全在 /api/* 仍受门禁）。
+  // fallback 只兜非 /api GET（前端深链刷新回 index.html），API 面照旧走下方 JSON 404。
+  if (config.staticDir) {
+    app.use(express.static(config.staticDir));
+    app.get(/^\/(?!api(?:\/|$)).*/, (_req, res) => {
+      res.sendFile(join(config.staticDir!, "index.html"));
+    });
+  }
 
   // ── 尾部兜底：未匹配路由 404；异常归一封闭集（Express 默认 HTML 错误页不出网）──────────
   app.use((req, res) => sendError(res, 404, "NOT_FOUND", "no such route"));
