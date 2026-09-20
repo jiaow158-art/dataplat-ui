@@ -7,6 +7,8 @@
 //   DATA_DIR      SQLite 记账目录（默认 ./data）
 //   HOST          监听地址（默认 127.0.0.1；M3-T1 方案A 生产设 0.0.0.0 供内网访问）
 //   STATIC_DIR    web/ 构建产物目录（可选：M3-T1 静态托管——配置时 BFF 直出前端）
+//   GW_DB_PATH    网关 gateway.db 路径（可选：M4-B3/B4 审计/统计只读直连；
+//                 未设置时 /api/admin/audit* 与 /api/admin/stats 返回 503 GW_DB_UNSET）
 import { resolve } from "node:path";
 import { BffStore, initDb } from "./db.ts";
 import { createApp } from "./app.ts";
@@ -25,6 +27,7 @@ const app = createApp(store, {
   authToken: requiredEnv("AUTH_TOKEN"),
   reportsDir: resolve(requiredEnv("REPORTS_DIR")),
   staticDir: process.env.STATIC_DIR ? resolve(process.env.STATIC_DIR) : undefined,
+  gwDbPath: process.env.GW_DB_PATH ? resolve(process.env.GW_DB_PATH) : undefined,
 });
 
 app.listen(port, host, () => {

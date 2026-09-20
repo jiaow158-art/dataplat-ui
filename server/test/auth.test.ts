@@ -38,7 +38,7 @@ test("登录成功：httpOnly+SameSite=Lax cookie、sessions 表登记（7 天�
 
   const me = await request(app.port, "GET", "/api/me", { cookie: `sid=${sid}` });
   assert.equal(me.status, 200);
-  assert.deepEqual(me.body, { username: "zhang" });
+  assert.deepEqual(me.body, { username: "zhang", is_admin: 0 });
 });
 
 test("登录失败：错密码/未知用户统一 401 封闭集，响应 ≥400ms（防爆破计时），不种 cookie", async () => {

@@ -81,7 +81,7 @@ export interface BffHandle {
 }
 
 export async function startBff(
-  opts: { gatewayUrl?: string; reportsDir?: string; staticDir?: string } = {},
+  opts: { gatewayUrl?: string; reportsDir?: string; staticDir?: string; gwDbPath?: string } = {},
 ): Promise<BffHandle> {
   const root = mkdtempSync(join(tmpdir(), "bff-test-"));
   const db = initDb(root);
@@ -91,6 +91,7 @@ export async function startBff(
     authToken: GATEWAY_TOKEN,
     reportsDir: opts.reportsDir, // UI-T7 报告静态服务根目录（不传 = 端点 500）
     staticDir: opts.staticDir, // M3-T1 静态托管（不传 = 无托管，原行为）
+    gwDbPath: opts.gwDbPath, // M4-B3/B4 网关库只读直连（不传 = 审计/统计 503 GW_DB_UNSET）
   });
   const server = app.listen(0, "127.0.0.1");
   const port = await new Promise<number>((resolve, reject) => {
@@ -110,7 +111,109 @@ export async function startBff(
   };
 }
 
-// ── mock 网关（Task3/4 用：捕获收到的请求供断言；行为由 handler 决定）──────────────────
+// ── 网关库 fixture（M4-B3/B4 用：按 engine-gateway src/store/schema.sql 的
+//    tasks/events/publications 表结构造最小数据；测试不依赖真网关进程）───────────────────
+
+/** 与 engine-gateway src/store/schema.sql 同构（字段与约束逐字对齐，勿改单边）。 */
+const GW_SCHEMA = `
+CREATE TABLE IF NOT EXISTS tasks (
+  run_id TEXT PRIMARY KEY,
+  client_submission_id TEXT,
+  session_id TEXT NOT NULL,
+  user TEXT NOT NULL, scope_group TEXT NOT NULL DEFAULT 'default',
+  question TEXT NOT NULL,
+  status TEXT NOT NULL,
+  stage TEXT,
+  attempt INTEGER NOT NULL DEFAULT 0,
+  lease_owner TEXT, lease_expires_at INTEGER,
+  cancel_requested INTEGER NOT NULL DEFAULT 0,
+  deadline INTEGER,
+  error_code TEXT, error_message TEXT,
+  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+  UNIQUE(client_submission_id)
+);
+CREATE TABLE IF NOT EXISTS events (
+  run_id TEXT NOT NULL, seq INTEGER NOT NULL,
+  type TEXT NOT NULL, payload TEXT NOT NULL, created_at INTEGER NOT NULL,
+  PRIMARY KEY(run_id, seq)
+);
+CREATE TABLE IF NOT EXISTS publications (
+  run_id TEXT PRIMARY KEY, report_path TEXT NOT NULL, published_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_session ON tasks(session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+`;
+
+export interface GwFixtureTask {
+  run_id: string;
+  session_id?: string;
+  user: string;
+  question: string;
+  status: string;
+  stage?: string | null;
+  attempt?: number;
+  error_code?: string | null;
+  error_message?: string | null;
+  created_at: number;
+  updated_at?: number;
+}
+
+export interface GwFixtureEvent {
+  seq: number;
+  type: string;
+  payload: unknown;
+  created_at: number;
+}
+
+/** 事件集两种形态：{run_id: [events]} 映射，或带 run_id 的事件数组。 */
+export type GwFixtureEvents = Record<string, GwFixtureEvent[]> | (GwFixtureEvent & { run_id: string })[];
+
+/** 建网关库 fixture 并写入任务/事件/发布行；返回库文件路径（写完即关，只读打开由被测端做）。 */
+export function buildGwFixture(
+  dir: string,
+  tasks: GwFixtureTask[],
+  events: GwFixtureEvents,
+  publications: { run_id: string; report_path: string; published_at?: number }[] = [],
+): string {
+  const file = join(dir, "gateway.db");
+  const db = new Database(file);
+  try {
+    db.exec(GW_SCHEMA);
+    const insTask = db.prepare(
+      `INSERT INTO tasks (run_id, client_submission_id, session_id, user, scope_group, question, status, stage,
+                          attempt, lease_owner, lease_expires_at, cancel_requested, deadline, error_code, error_message,
+                          created_at, updated_at)
+       VALUES (?, NULL, ?, ?, 'default', ?, ?, ?, ?, NULL, NULL, 0, NULL, ?, ?, ?, ?)`,
+    );
+    for (const t of tasks) {
+      insTask.run(
+        t.run_id,
+        t.session_id ?? `sess-${t.run_id}`,
+        t.user,
+        t.question,
+        t.status,
+        t.stage ?? null,
+        t.attempt ?? 1,
+        t.error_code ?? null,
+        t.error_message ?? null,
+        t.created_at,
+        t.updated_at ?? t.created_at,
+      );
+    }
+    const insEvent = db.prepare("INSERT INTO events (run_id, seq, type, payload, created_at) VALUES (?, ?, ?, ?, ?)");
+    const eventList: (GwFixtureEvent & { run_id: string })[] = Array.isArray(events)
+      ? events
+      : Object.entries(events).flatMap(([runId, evs]) => evs.map((e) => ({ run_id: runId, ...e })));
+    for (const e of eventList) {
+      insEvent.run(e.run_id, e.seq, e.type, JSON.stringify(e.payload ?? null), e.created_at);
+    }
+    const insPub = db.prepare("INSERT INTO publications (run_id, report_path, published_at) VALUES (?, ?, ?)");
+    for (const p of publications) insPub.run(p.run_id, p.report_path, p.published_at ?? 0);
+  } finally {
+    db.close();
+  }
+  return file;
+}
 
 export interface CapturedRequest {
   method: string;
@@ -118,6 +221,115 @@ export interface CapturedRequest {
   headers: http.IncomingHttpHeaders;
   body: string;
 }
+
+/** 标准网关 fixture（M4-B3/B4 测试共用）：zhang/li 两用户、四任务（今日 succeeded+failed+queued、
+ *  昨日 succeeded）、逐类事件（stage/sql/answer/report/done/error）与一条发布记录。
+ *  时间一律本地时区相对锚点（今日/昨日），跨时区跑测不漂移。 */
+export function buildStandardGwFixture(dir: string): {
+  file: string;
+  today: string;
+  yesterday: string;
+  aaa: number;
+  bbb: number;
+  ccc: number;
+  ddd: number;
+} {
+  const at = (dayOffset: number, h: number, m: number): number => {
+    const d = new Date();
+    d.setDate(d.getDate() + dayOffset);
+    d.setHours(h, m, 0, 0);
+    return d.getTime();
+  };
+  const dayKey = (ms: number): string => {
+    const d = new Date(ms);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+  const aaa = at(0, 10, 0);
+  const bbb = at(0, 11, 0);
+  const ccc = at(-1, 15, 0);
+  const ddd = at(0, 9, 0);
+  const file = buildGwFixture(
+    dir,
+    [
+      {
+        run_id: "run-aaa-1111",
+        user: "zhang",
+        question: "本月瓷砖销量如何",
+        status: "succeeded",
+        stage: "publishing",
+        created_at: aaa,
+        updated_at: aaa + 5 * 60_000,
+      },
+      {
+        run_id: "run-bbb-2222",
+        user: "zhang",
+        question: "库存账龄分布",
+        status: "failed",
+        attempt: 2,
+        error_code: "ENGINE_TIMEOUT",
+        error_message: "执行超时",
+        created_at: bbb,
+        updated_at: bbb + 2 * 60_000,
+      },
+      {
+        run_id: "run-ccc-3333",
+        user: "li",
+        question: "应收逾期汇总",
+        status: "succeeded",
+        created_at: ccc,
+        updated_at: ccc + 60_000,
+      },
+      { run_id: "run-ddd-4444", user: "li", question: "新任务排队中", status: "queued", attempt: 0, created_at: ddd },
+    ],
+    {
+      "run-aaa-1111": [
+        { seq: 1, type: "stage", payload: { stage: "analyzing", text: "解析问题" }, created_at: aaa },
+        {
+          seq: 2,
+          type: "sql",
+          payload: { sql: "SELECT count(*) FROM dm_fin_sales", rows: 5, truncated: false, result_ref: "ref://aaa-1", elapsed_ms: 1200 },
+          created_at: aaa + 60_000,
+        },
+        {
+          seq: 3,
+          type: "sql",
+          payload: { sql: "SELECT * FROM dm_fin_stock", rows: 0, truncated: true, result_ref: "ref://aaa-2", elapsed_ms: 800 },
+          created_at: aaa + 120_000,
+        },
+        { seq: 4, type: "answer", payload: { markdown: "## 结论\n瓷砖销量上升 12%，主要来自华南区域。" }, created_at: aaa + 240_000 },
+        { seq: 5, type: "report", payload: { path: "reports/run-aaa-1111.html" }, created_at: aaa + 240_000 },
+        {
+          seq: 6,
+          type: "done",
+          payload: { run_id: "run-aaa-1111", status: "succeeded", engine: "dsh", elapsed_ms: 300_000, tokens: { input: 1200, output: 350, cache_read: 8000 }, recovered: false },
+          created_at: aaa + 300_000,
+        },
+      ],
+      "run-bbb-2222": [
+        { seq: 1, type: "stage", payload: { stage: "querying" }, created_at: bbb },
+        { seq: 2, type: "error", payload: { code: "ENGINE_TIMEOUT", message: "执行超时" }, created_at: bbb + 120_000 },
+      ],
+      "run-ccc-3333": [
+        {
+          seq: 1,
+          type: "sql",
+          payload: { sql: "SELECT * FROM dwr_ar_account", rows: 3, truncated: false, elapsed_ms: 900 },
+          created_at: ccc,
+        },
+        {
+          seq: 2,
+          type: "done",
+          payload: { run_id: "run-ccc-3333", status: "succeeded", engine: "dsh", elapsed_ms: 60_000, tokens: { input: 100, output: 50, cache_read: 200 }, recovered: false },
+          created_at: ccc + 60_000,
+        },
+      ],
+    },
+    [{ run_id: "run-aaa-1111", report_path: "reports/run-aaa-1111.html", published_at: aaa + 240_000 }],
+  );
+  return { file, today: dayKey(aaa), yesterday: dayKey(ccc), aaa, bbb, ccc, ddd };
+}
+
+// ── mock 网关（Task3/4 用：捕获收到的请求供断言；行为由 handler 决定）──────────────────
 
 export interface MockGateway {
   port: number;

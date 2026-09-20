@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS users (
   username TEXT PRIMARY KEY,
   password_hash TEXT NOT NULL,          -- bcryptjs（纯 JS，免 Windows 原生编译）
   is_admin INTEGER NOT NULL DEFAULT 0,  -- M4-B1 角色标记位（0=普通 1=管理员；旧库由 initDb 补列）
+  disabled INTEGER NOT NULL DEFAULT 0,  -- M4-B2 停用位（1=停用：登录 401 同密码错形态；旧库由 initDb 补列）
   created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS sessions (   -- 登录会话（服务端可吊销；cookie 只存 token）

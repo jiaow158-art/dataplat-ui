@@ -12,6 +12,15 @@ export interface UserRow {
   username: string;
   password_hash: string;
   is_admin: number;
+  disabled: number;
+  created_at: number;
+}
+
+/** 端点出口形态（M4-B2 红线：绝不含 password_hash）。 */
+export interface PublicUserRow {
+  username: string;
+  is_admin: number;
+  disabled: number;
   created_at: number;
 }
 
@@ -86,11 +95,14 @@ export function initDb(dataDir: string): Database.Database {
     throw new Error(`[CONFIG] WAL 未生效（journal_mode=${journalMode}）——网络盘/旧文件系统会丢并发写，拒绝启动`);
   }
   db.exec(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "schema.sql"), "utf8"));
-  // M4-B1：旧库补列（SQLite 的 ADD COLUMN 无 IF NOT EXISTS——pragma 检测后 ALTER，幂等；
+  // M4-B1/B2：旧库补列（SQLite 的 ADD COLUMN 无 IF NOT EXISTS——pragma 检测后 ALTER，幂等；
   // 新库由 schema.sql 直接带上该列，此处自然跳过）。
   const userCols = db.prepare("PRAGMA table_info(users)").all() as { name: string }[];
   if (!userCols.some((c) => c.name === "is_admin")) {
     db.exec("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!userCols.some((c) => c.name === "disabled")) {
+    db.exec("ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0");
   }
   return db;
 }
@@ -130,6 +142,25 @@ export class BffStore {
   /** M4-B1 角色翻转（admin:grant 用）；返回用户是否存在。 */
   setAdmin(username: string, isAdmin: boolean): boolean {
     return this.db.prepare("UPDATE users SET is_admin = ? WHERE username = ?").run(isAdmin ? 1 : 0, username).changes > 0;
+  }
+
+  // ---------- 用户管理（M4-B2 管理后台页；出口一律 PublicUserRow，密码哈希不出库） ----------
+
+  /** 全量账号列表（创建序）；SQL 就不查 password_hash（纵深防御）。 */
+  listUsers(): PublicUserRow[] {
+    return this.db
+      .prepare("SELECT username, is_admin, disabled, created_at FROM users ORDER BY created_at, rowid")
+      .all() as PublicUserRow[];
+  }
+
+  /** 改密（M4-B2 reset-password 端点；不动角色/停用位）。返回用户是否存在。 */
+  setPassword(username: string, passwordHash: string): boolean {
+    return this.db.prepare("UPDATE users SET password_hash = ? WHERE username = ?").run(passwordHash, username).changes > 0;
+  }
+
+  /** 停用/启用（M4-B2；停用后登录 401 与密码错同形）。返回用户是否存在。 */
+  setDisabled(username: string, disabled: boolean): boolean {
+    return this.db.prepare("UPDATE users SET disabled = ? WHERE username = ?").run(disabled ? 1 : 0, username).changes > 0;
   }
 
   // ---------- 管理操作留痕（M4-B5：CLI 与 B2 程序化入口都经此处落账） ----------
@@ -217,6 +248,13 @@ export class BffStore {
     return this.db
       .prepare("SELECT * FROM ui_sessions WHERE username = ? ORDER BY updated_at DESC, rowid DESC")
       .all(username) as UiSessionRow[];
+  }
+
+  /** 全员 UI 会话（M4-B3 按日期审计时间线用）：创建时间新到旧，限量。 */
+  listUiSessionsAll(limit: number): UiSessionRow[] {
+    return this.db
+      .prepare("SELECT * FROM ui_sessions ORDER BY created_at DESC, rowid DESC LIMIT ?")
+      .all(limit) as UiSessionRow[];
   }
 
   getUiSession(id: string): UiSessionRow | undefined {

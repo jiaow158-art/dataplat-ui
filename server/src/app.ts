@@ -5,14 +5,29 @@
 // 绝不读请求体/请求头里的用户自报值——它是反代网关时 X-User 的唯一来源（红线）。
 // 错误响应唯一出口 sendError：code/message 封闭集字面量（对齐网关 http.ts 约定）。
 import express, { type Express, type Request, type Response } from "express";
-import { compare, hashSync } from "bcryptjs";
+import { compare, hash, hashSync } from "bcryptjs";
 import { randomBytes, randomUUID } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import { basename, join, resolve, sep } from "node:path";
 import { readFileSync } from "node:fs";
+import type Database from "better-sqlite3";
 import type { BffStore } from "./db.ts";
 import { GatewayClient, GatewayUnreachableError, type GatewayResponse } from "./gateway.ts";
 import { SseFrameParser, type SseEvent } from "./sse-parser.ts";
+import {
+  allTasks,
+  dayKey,
+  doneEventRows,
+  eventsOf,
+  getTask,
+  oneLine,
+  openGwReadonly,
+  runIdsByPrefix,
+  taskDigest,
+  tasksByUser,
+  tasksInRange,
+  type GwTaskRow,
+} from "./gw-audit.ts";
 
 declare module "express-serve-static-core" {
   interface Request {
@@ -29,6 +44,8 @@ export interface BffConfig {
   reportsDir?: string;
   /** web/ 构建产物目录（M3-T1 方案A 静态托管）：配置时由 BFF 托管前端 + SPA fallback。 */
   staticDir?: string;
+  /** 网关 SQLite 库路径（M4-B3/B4 审计与统计只读直连；env GW_DB_PATH。未设置时审计/统计端点 503 GW_DB_UNSET）。 */
+  gwDbPath?: string;
   /** 登录失败人为慢响应下限 ms（spec §6.5 防爆破计时，默认 400）。 */
   loginMinFailMs?: number;
   /** 同用户名登录尝试上限（次/分钟，默认 5）。 */
@@ -119,7 +136,8 @@ export function createApp(store: BffStore, config: BffConfig): Express {
     const start = Date.now();
     const user = store.getUser(username);
     const ok = await compare(password, user?.password_hash ?? DUMMY_HASH);
-    if (!user || !ok) {
+    // M4-B2：停用账号与密码错同形 401（不泄露停用状态；bcrypt 已跑，计时口径一致）
+    if (!user || !ok || user.disabled === 1) {
       // 统一慢响应：bcrypt 已耗时则补足到下限，失败路径人工 ≥400ms（防爆破计时）
       const remain = loginMinFailMs - (Date.now() - start);
       if (remain > 0) await sleep(remain);
@@ -145,7 +163,8 @@ export function createApp(store: BffStore, config: BffConfig): Express {
   });
 
   app.get("/api/me", (req, res) => {
-    res.json({ username: req.user });
+    // M4-B2：前端据此渲染"管理后台"入口（仅 is_admin=1 可见）
+    res.json({ username: req.user, is_admin: store.getUser(req.user!)?.is_admin ?? 0 });
   });
 
   // ── 管理后台 v1（M4-B1/B5/B6）：会话门禁之上叠 admin 守卫 ──────────────────────────
@@ -181,6 +200,367 @@ export function createApp(store: BffStore, config: BffConfig): Express {
       return sendError(res, 400, "BAD_REQUEST", "user must be a non-empty string");
     }
     res.json(store.listLogins(typeof user === "string" ? user : undefined, limit));
+  });
+
+  // ── M4-B2 用户管理（替代 CLI：列表/建号/重置密码/停用启用；写操作全落 admin_audit）────
+  // 红线：password_hash 永不出端点——出口形态一律 {username,is_admin,disabled,created_at}。
+
+  const toPublicUser = (u: { username: string; is_admin: number; disabled: number; created_at: number }) => ({
+    username: u.username,
+    is_admin: u.is_admin,
+    disabled: u.disabled,
+    created_at: u.created_at,
+  });
+
+  /** 建号凭据校验：用户名 trim 后 1..64 位、密码 8..128 位（与 CLI admin:add 同口径）。 */
+  const validateNewCredentials = (
+    username: unknown,
+    password: unknown,
+  ): { username: string; password: string } | null => {
+    if (typeof username !== "string") return null;
+    const name = username.trim();
+    if (!name || name.length > 64) return null;
+    if (typeof password !== "string" || password.length < 8 || password.length > 128) return null;
+    return { username: name, password };
+  };
+
+  const validatePassword = (password: unknown): string | null =>
+    typeof password === "string" && password.length >= 8 && password.length <= 128 ? password : null;
+
+  app.get("/api/admin/users", (_req, res) => {
+    res.json(store.listUsers());
+  });
+
+  app.post("/api/admin/users", async (req, res) => {
+    const body = (req.body ?? {}) as { username?: unknown; password?: unknown; is_admin?: unknown };
+    const creds = validateNewCredentials(body.username, body.password);
+    if (!creds) return sendError(res, 400, "BAD_REQUEST", "username (1..64 chars) and password (8..128 chars) are required");
+    if (body.is_admin !== undefined && typeof body.is_admin !== "boolean") {
+      return sendError(res, 400, "BAD_REQUEST", "is_admin must be a boolean");
+    }
+    const isAdmin = body.is_admin === true;
+    if (store.getUser(creds.username)) return sendError(res, 409, "CONFLICT", "user already exists");
+    store.upsertUser(creds.username, await hash(creds.password, 10), { isAdmin });
+    store.insertAdminAudit({
+      username: req.user!,
+      action: "user_create",
+      target: creds.username,
+      detail: isAdmin ? "is_admin=1" : undefined,
+    });
+    res.status(201).json(toPublicUser(store.getUser(creds.username)!));
+  });
+
+  app.post("/api/admin/users/:name/reset-password", async (req, res) => {
+    const password = validatePassword(((req.body ?? {}) as { password?: unknown }).password);
+    if (password === null) return sendError(res, 400, "BAD_REQUEST", "password must be 8..128 chars");
+    const target = store.getUser(req.params.name);
+    if (!target) return sendError(res, 404, "NOT_FOUND", "user not found");
+    store.setPassword(target.username, await hash(password, 10));
+    store.insertAdminAudit({ username: req.user!, action: "password_reset", target: target.username });
+    res.json({ username: target.username });
+  });
+
+  /** 停用/启用共用：不能停用自己（唯一防锁死规则——管理员把自己停了就没有解锁的人）。 */
+  const setUserDisabled = (req: Request, res: Response, disabled: boolean): void => {
+    const target = store.getUser(req.params.name);
+    if (!target) return sendError(res, 404, "NOT_FOUND", "user not found");
+    if (disabled && target.username === req.user) {
+      return sendError(res, 400, "BAD_REQUEST", "cannot disable yourself");
+    }
+    store.setDisabled(target.username, disabled);
+    store.insertAdminAudit({
+      username: req.user!,
+      action: disabled ? "user_disable" : "user_enable",
+      target: target.username,
+    });
+    res.json(toPublicUser(store.getUser(target.username)!));
+  };
+  app.post("/api/admin/users/:name/disable", (req, res) => setUserDisabled(req, res, true));
+  app.post("/api/admin/users/:name/enable", (req, res) => setUserDisabled(req, res, false));
+
+  // ── M4-B3/B4 审计查询与统计（BFF 只读直连网关库；audit.mjs / pilot-daily.mjs 界面化）──
+  // GW_DB_PATH 未设置 → 全部 503 GW_DB_UNSET（生产接线由主线执行：env + migrate + pm2）。
+
+  /** 审计端点内部错误（404 等经 withGw 抛出，避免二次写响应）。 */
+  class AdminHttpError extends Error {
+    status: number;
+    code: string;
+    constructor(status: number, code: string, message: string) {
+      super(message);
+      this.status = status;
+      this.code = code;
+    }
+  }
+
+  /** 只读打开网关库执行查询并回 JSON：未配置 503；打开失败 500（细节只进服务端日志）。 */
+  const withGw = (res: Response, fn: (db: Database.Database) => unknown): void => {
+    if (!config.gwDbPath) return sendError(res, 503, "GW_DB_UNSET", "gateway db path not configured");
+    let db: Database.Database;
+    try {
+      db = openGwReadonly(config.gwDbPath);
+    } catch (err) {
+      console.error(`[admin] 网关库打开失败 path=${config.gwDbPath}:`, err);
+      return sendError(res, 500, "INTERNAL", "gateway db unreadable");
+    }
+    try {
+      let out: unknown;
+      try {
+        out = fn(db);
+      } catch (err) {
+        if (err instanceof AdminHttpError) return sendError(res, err.status, err.code, err.message);
+        throw err;
+      }
+      res.json(out);
+    } finally {
+      db.close();
+    }
+  };
+
+  const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+  /** 时间线任务卡要点（audit.mjs taskCard 的 JSON 形态）。 */
+  const taskItem = (gw: Database.Database, t: GwTaskRow) => {
+    const d = taskDigest(gw, t);
+    return {
+      kind: "task" as const,
+      ts: t.created_at,
+      run_id: t.run_id,
+      user: t.user,
+      question: t.question,
+      status: t.status,
+      attempt: t.attempt,
+      elapsed_ms: d.elapsedMs,
+      elapsed_source: d.elapsedSource,
+      sql_count: d.sqlCount,
+      sql_rows: d.rowsSeq,
+      answer_excerpt: d.answer != null ? oneLine(d.answer, 160) : null,
+      report_path: d.reportPath,
+      error_code: t.error_code,
+      error_message: t.error_message,
+    };
+  };
+
+  /** YYYY-MM-DD → 本地时区 [t0, t1)；非法返回 null。 */
+  const parseDayRange = (date: string): { t0: number; t1: number } | null => {
+    if (!DATE_RE.test(date)) return null;
+    const t0 = new Date(`${date}T00:00:00`).getTime();
+    if (Number.isNaN(t0)) return null;
+    return { t0, t1: t0 + 86_400_000 };
+  };
+
+  // 按用户：网关任务时间线 + BFF 开户/登录记录并入（since 起本地日键过滤）
+  app.get("/api/admin/audit/user", (req, res) => {
+    const name = req.query.name;
+    if (typeof name !== "string" || !name.trim()) return sendError(res, 400, "BAD_REQUEST", "name is required");
+    const since = req.query.since;
+    if (since !== undefined && (typeof since !== "string" || !DATE_RE.test(since))) {
+      return sendError(res, 400, "BAD_REQUEST", "since must be YYYY-MM-DD");
+    }
+    const user = name.trim();
+    const sinceDay = typeof since === "string" ? since : null;
+    withGw(res, (gw) => {
+      const items: any[] = [];
+      const u = store.getUser(user);
+      if (u && (sinceDay === null || dayKey(u.created_at) >= sinceDay)) {
+        items.push({ kind: "account", ts: u.created_at });
+      }
+      for (const l of store.listLogins(user, 500)) {
+        if (sinceDay !== null && dayKey(l.created_at) < sinceDay) continue;
+        items.push({
+          kind: "login",
+          ts: l.created_at,
+          token_prefix: l.token_prefix,
+          expires_at: l.expires_at,
+          logout_at: l.logout_at,
+        });
+      }
+      for (const t of tasksByUser(gw, user)) {
+        if (sinceDay !== null && dayKey(t.created_at) < sinceDay) continue;
+        items.push(taskItem(gw, t));
+      }
+      items.sort((a, b) => a.ts - b.ts);
+      return { user, since: sinceDay, items };
+    });
+  });
+
+  // 按任务：任务行 + 事件流逐条（payload 已解析）+ BFF 关联（UI 会话/消息记账）
+  app.get("/api/admin/audit/run/:runId", (req, res) => {
+    withGw(res, (gw) => {
+      const t = getTask(gw, req.params.runId);
+      if (!t) throw new AdminHttpError(404, "NOT_FOUND", "run not found");
+      const d = taskDigest(gw, t);
+      const msg = store.getMessageByRunId(t.run_id);
+      const ui = msg ? store.getUiSession(msg.ui_session_id) : undefined;
+      return {
+        task: {
+          run_id: t.run_id,
+          session_id: t.session_id,
+          user: t.user,
+          scope_group: t.scope_group,
+          question: t.question,
+          status: t.status,
+          stage: t.stage,
+          attempt: t.attempt,
+          error_code: t.error_code,
+          error_message: t.error_message,
+          created_at: t.created_at,
+          updated_at: t.updated_at,
+          deadline: t.deadline,
+        },
+        events: eventsOf(gw, t.run_id),
+        elapsed_ms: d.elapsedMs,
+        report_path: d.reportPath,
+        bff: msg
+          ? {
+              ui_session: ui ? { id: ui.id, title: ui.title, created_at: ui.created_at } : null,
+              message: { id: msg.id, status: msg.status, created_at: msg.created_at, report_path: msg.report_path },
+            }
+          : null,
+      };
+    });
+  });
+
+  // 按日期：当日全员行为一览（网关任务 + BFF 开户/登录/新会话并入时间线）
+  app.get("/api/admin/audit/date", (req, res) => {
+    const date = req.query.date;
+    if (typeof date !== "string") return sendError(res, 400, "BAD_REQUEST", "date is required");
+    const range = parseDayRange(date);
+    if (!range) return sendError(res, 400, "BAD_REQUEST", "date must be YYYY-MM-DD");
+    withGw(res, (gw) => {
+      const tasks = tasksInRange(gw, range.t0, range.t1);
+      const byStatus: Record<string, number> = {};
+      const byUser = new Map<string, number>();
+      for (const t of tasks) {
+        byStatus[t.status] = (byStatus[t.status] ?? 0) + 1;
+        byUser.set(t.user, (byUser.get(t.user) ?? 0) + 1);
+      }
+      const items: any[] = tasks.map((t) => taskItem(gw, t));
+      for (const u of store.listUsers()) {
+        if (u.created_at >= range.t0 && u.created_at < range.t1) {
+          items.push({ kind: "account", ts: u.created_at, username: u.username });
+        }
+      }
+      for (const l of store.listLogins(undefined, 500)) {
+        if (l.created_at >= range.t0 && l.created_at < range.t1) {
+          items.push({ kind: "login", ts: l.created_at, username: l.username, token_prefix: l.token_prefix, logout_at: l.logout_at });
+        }
+      }
+      for (const s of store.listUiSessionsAll(500)) {
+        if (s.created_at >= range.t0 && s.created_at < range.t1) {
+          items.push({ kind: "ui_session", ts: s.created_at, username: s.username, title: oneLine(s.title, 60) });
+        }
+      }
+      items.sort((a, b) => a.ts - b.ts);
+      return {
+        date,
+        summary: {
+          tasks: tasks.length,
+          by_status: byStatus,
+          by_user: [...byUser.entries()].map(([user, n]) => ({ user, n })).sort((a, b) => b.n - a.n),
+        },
+        items,
+      };
+    });
+  });
+
+  // 前缀补全：用户名（BFF）+ run_id（网关）——审计页输入框 datalist
+  app.get("/api/admin/audit/suggest", (req, res) => {
+    const q = req.query.q;
+    if (typeof q !== "string" || !q.trim()) return sendError(res, 400, "BAD_REQUEST", "q is required");
+    const prefix = q.trim();
+    withGw(res, (gw) => ({
+      users: store
+        .listUsers()
+        .map((u) => u.username)
+        .filter((n) => n.startsWith(prefix))
+        .slice(0, 10),
+      run_ids: runIdsByPrefix(gw, prefix, 10),
+    }));
+  });
+
+  // ── M4-B4 使用统计（pilot-daily.mjs 聚合 port：总量/分布/tokens/活跃用户/今日/近14天）──
+  app.get("/api/admin/stats", (_req, res) => {
+    withGw(res, (gw) => {
+      const tasks = allTasks(gw);
+      const byStatus: Record<string, number> = {};
+      for (const t of tasks) byStatus[t.status] = (byStatus[t.status] ?? 0) + 1;
+      const nOf = (s: string) => byStatus[s] ?? 0;
+      const terminal = nOf("succeeded") + nOf("failed") + nOf("cancelled");
+
+      // tokens：done 事件逐 run 累计（无 done 的任务计不进 tokens，与 pilot-daily 同口径）
+      const tokens = { input: 0, output: 0, cache_read: 0 };
+      for (const r of doneEventRows(gw)) {
+        try {
+          const tk = (JSON.parse(r.payload) as { tokens?: Record<string, unknown> })?.tokens ?? {};
+          tokens.input += Number(tk.input ?? 0);
+          tokens.output += Number(tk.output ?? 0);
+          tokens.cache_read += Number(tk.cache_read ?? 0);
+        } catch {
+          /* 非法 payload 跳过 */
+        }
+      }
+
+      const today = dayKey(Date.now());
+      const todayTasks = tasks.filter((t) => dayKey(t.created_at) === today);
+      const dayStart = new Date();
+      dayStart.setHours(0, 0, 0, 0);
+      const daily: { date: string; count: number }[] = [];
+      const dailyIdx = new Map<string, number>();
+      for (let i = 13; i >= 0; i--) {
+        const date = dayKey(dayStart.getTime() - i * 86_400_000);
+        dailyIdx.set(date, daily.length);
+        daily.push({ date, count: 0 });
+      }
+      for (const t of tasks) {
+        const i = dailyIdx.get(dayKey(t.created_at));
+        if (i !== undefined) daily[i].count++;
+      }
+
+      const failed = tasks.filter((t) => t.status === "failed" || t.status === "cancelled");
+      const failByCode = new Map<string, { count: number; sample: string | null }>();
+      for (const t of failed) {
+        const k = t.error_code ?? "(无 error_code)";
+        const cur = failByCode.get(k) ?? { count: 0, sample: null as string | null };
+        cur.count++;
+        cur.sample ??= oneLine(t.error_message, 120) || null;
+        failByCode.set(k, cur);
+      }
+
+      const todayRange = parseDayRange(today)!;
+      const newUsers = store.listUsers().filter((u) => u.created_at >= todayRange.t0 && u.created_at < todayRange.t1).length;
+
+      return {
+        totals: {
+          all: tasks.length,
+          succeeded: nOf("succeeded"),
+          failed: nOf("failed"),
+          cancelled: nOf("cancelled"),
+          running: nOf("running"),
+          queued: nOf("queued"),
+          terminal,
+          success_rate_pct: terminal > 0 ? Math.round((nOf("succeeded") / terminal) * 1000) / 10 : null,
+        },
+        active_users: new Set(tasks.map((t) => t.user)).size,
+        tokens,
+        today: { date: today, tasks: todayTasks.length, users: [...new Set(todayTasks.map((t) => t.user))], new_users: newUsers },
+        daily,
+        fail_by_code: [...failByCode.entries()]
+          .map(([code, v]) => ({ code, count: v.count, sample_message: v.sample }))
+          .sort((a, b) => b.count - a.count),
+        failed: failed
+          .slice(-100)
+          .reverse()
+          .map((t) => ({
+            run_id: t.run_id,
+            user: t.user,
+            question: oneLine(t.question, 60),
+            status: t.status,
+            error_code: t.error_code,
+            attempt: t.attempt,
+            created_at: t.created_at,
+          })),
+      };
+    });
   });
 
   // ── UI 会话 CRUD（spec §4：BFF 记账表；只能操作自己的——非本人/不存在统一 404 不泄露存在性）──
