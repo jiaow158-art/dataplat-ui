@@ -11,7 +11,7 @@ import type { IncomingMessage } from "node:http";
 import { basename, join, resolve, sep } from "node:path";
 import { readFileSync } from "node:fs";
 import type Database from "better-sqlite3";
-import type { BffStore } from "./db.ts";
+import { FEEDBACK_CATEGORIES, INCIDENT_STATUSES, type BffStore } from "./db.ts";
 import { GatewayClient, GatewayUnreachableError, type GatewayResponse } from "./gateway.ts";
 import { SseFrameParser, type SseEvent } from "./sse-parser.ts";
 import {
@@ -277,6 +277,73 @@ export function createApp(store: BffStore, config: BffConfig): Express {
   };
   app.post("/api/admin/users/:name/disable", (req, res) => setUserDisabled(req, res, true));
   app.post("/api/admin/users/:name/enable", (req, res) => setUserDisabled(req, res, false));
+
+  // ── 用户反馈闭环·管理面（知识健康治理 §三B）：队列查询 + 流转；每次 PATCH 落 admin_audit ──
+
+  // 队列：倒序；联 messages 按 run_id 带出问题文本（归因时直读用户问了什么）
+  app.get("/api/admin/incidents", (req, res) => {
+    const limit = parseLimit(req.query.limit);
+    if (limit === null) return sendError(res, 400, "BAD_REQUEST", "limit must be an integer between 1 and 500");
+    const status = req.query.status;
+    if (status !== undefined && (typeof status !== "string" || !(INCIDENT_STATUSES as readonly string[]).includes(status))) {
+      return sendError(res, 400, "BAD_REQUEST", `status must be one of ${INCIDENT_STATUSES.join("/")}`);
+    }
+    res.json(store.listIncidents(typeof status === "string" ? status : undefined, limit));
+  });
+
+  /** 流转矩阵（封闭集内才允许）：待归因→修复中/驳回；修复中→已发布/驳回；驳回→待归因；已发布=终态。 */
+  const INCIDENT_TRANSITIONS: Record<string, readonly string[]> = {
+    待归因: ["修复中", "驳回"],
+    修复中: ["已发布", "驳回"],
+    驳回: ["待归因"],
+    已发布: [],
+  };
+  const FIX_COMMIT_RE = /^[0-9a-f]{8,40}$/;
+
+  app.patch("/api/admin/incidents/:id", (req, res) => {
+    const body = (req.body ?? {}) as { status?: unknown; resolution_note?: unknown; fix_commit?: unknown };
+    const cur = store.getIncident(req.params.id);
+    if (!cur) return sendError(res, 404, "NOT_FOUND", "incident not found");
+    if (body.status === undefined && body.resolution_note === undefined && body.fix_commit === undefined) {
+      return sendError(res, 400, "BAD_REQUEST", "nothing to update (status / resolution_note / fix_commit)");
+    }
+    if (body.status !== undefined && (typeof body.status !== "string" || !(INCIDENT_STATUSES as readonly string[]).includes(body.status))) {
+      return sendError(res, 400, "BAD_REQUEST", `status must be one of ${INCIDENT_STATUSES.join("/")}`);
+    }
+    if (body.resolution_note !== undefined && (typeof body.resolution_note !== "string" || body.resolution_note.length > 500)) {
+      return sendError(res, 400, "BAD_REQUEST", "resolution_note must be a string of at most 500 chars");
+    }
+    if (body.fix_commit !== undefined && (typeof body.fix_commit !== "string" || !FIX_COMMIT_RE.test(body.fix_commit))) {
+      return sendError(res, 400, "BAD_REQUEST", "fix_commit must be 8-40 hex chars");
+    }
+
+    // 流转约束：status 变更必须在当前状态的可达集内（同值=非流转，放行）
+    let nextStatus = cur.status;
+    if (typeof body.status === "string" && body.status !== cur.status) {
+      if (!(INCIDENT_TRANSITIONS[cur.status] ?? []).includes(body.status)) {
+        return sendError(res, 409, "BAD_TRANSITION", `illegal transition ${cur.status} → ${body.status}`);
+      }
+      nextStatus = body.status;
+    }
+    // 已发布强制 fix_commit（本次携带或此前在库）
+    const nextCommit = body.fix_commit !== undefined ? (body.fix_commit as string) : cur.fix_commit;
+    if (nextStatus === "已发布" && !nextCommit) {
+      return sendError(res, 400, "BAD_REQUEST", "fix_commit (8-40 hex) is required to mark published");
+    }
+
+    const updated = store.updateIncident(cur.id, {
+      status: nextStatus,
+      resolution_note: body.resolution_note !== undefined ? (body.resolution_note as string) : undefined,
+      fix_commit: body.fix_commit !== undefined ? (body.fix_commit as string) : undefined,
+    })!;
+    store.insertAdminAudit({
+      username: req.user!,
+      action: "incident_update",
+      target: cur.id,
+      detail: `${cur.status}→${updated.status}`,
+    });
+    res.json(updated);
+  });
 
   // ── M4-B3/B4 审计查询与统计（BFF 只读直连网关库；audit.mjs / pilot-daily.mjs 界面化）──
   // GW_DB_PATH 未设置 → 全部 503 GW_DB_UNSET（生产接线由主线执行：env + migrate + pm2）。
@@ -561,6 +628,39 @@ export function createApp(store: BffStore, config: BffConfig): Express {
           })),
       };
     });
+  });
+
+  // ── 用户反馈闭环·提交面（知识健康治理 §三B）：登录即可（非 admin）──
+  // 对话流「有问题」入口：分类封闭集四选一；同 run 同用户同分类 60s 内幂等（不重复落行）。
+  const FEEDBACK_DEDUP_MS = 60_000;
+
+  app.post("/api/feedback", (req, res) => {
+    const user = req.user!;
+    const body = (req.body ?? {}) as { run_id?: unknown; ui_session_id?: unknown; category?: unknown; description?: unknown };
+    if (typeof body.run_id !== "string" || !body.run_id.trim()) {
+      return sendError(res, 400, "BAD_REQUEST", "run_id is required");
+    }
+    if (typeof body.category !== "string" || !(FEEDBACK_CATEGORIES as readonly string[]).includes(body.category)) {
+      return sendError(res, 400, "BAD_REQUEST", `category must be one of ${FEEDBACK_CATEGORIES.join("/")}`);
+    }
+    if (body.description !== undefined && (typeof body.description !== "string" || body.description.length > 500)) {
+      return sendError(res, 400, "BAD_REQUEST", "description must be a string of at most 500 chars");
+    }
+    if (body.ui_session_id !== undefined && typeof body.ui_session_id !== "string") {
+      return sendError(res, 400, "BAD_REQUEST", "ui_session_id must be a string");
+    }
+    // 幂等窗口命中：返回既有行（201，不重复落行）——防手抖双击与前端重试
+    const dup = store.findRecentDuplicateIncident(user, body.run_id, body.category, FEEDBACK_DEDUP_MS);
+    if (dup) return res.status(201).json(dup);
+    res.status(201).json(
+      store.insertIncident({
+        username: user,
+        runId: body.run_id,
+        uiSessionId: body.ui_session_id,
+        category: body.category,
+        description: body.description,
+      }),
+    );
   });
 
   // ── UI 会话 CRUD（spec §4：BFF 记账表；只能操作自己的——非本人/不存在统一 404 不泄露存在性）──

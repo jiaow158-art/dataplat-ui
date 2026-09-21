@@ -37,9 +37,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_run ON messages(run_id);
 CREATE TABLE IF NOT EXISTS admin_audit ( -- M4-B5 管理操作留痕（CLI 与 B2 程序化入口都写；只增不删）
   id TEXT PRIMARY KEY,                  -- aa-<uuid>
   username TEXT NOT NULL,               -- 操作者（CLI 记 "<cli>"）
-  action TEXT NOT NULL,                 -- user_create|user_disable|user_enable|password_reset|grant_admin|revoke_admin
-  target TEXT NOT NULL,                 -- 被操作账号
-  detail TEXT,                          -- 补充说明（如 is_admin 0→1）；绝不写凭据
+  action TEXT NOT NULL,                 -- user_create|user_disable|user_enable|password_reset|grant_admin|revoke_admin|incident_update
+  target TEXT NOT NULL,                 -- 被操作账号 / incident id
+  detail TEXT,                          -- 补充说明（如 is_admin 0→1、状态 旧→新）；绝不写凭据
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit(created_at);
@@ -52,3 +52,18 @@ CREATE TABLE IF NOT EXISTS login_log (  -- M4-B6 登录记账（旁路：不动 
   logout_at INTEGER                     -- 登出时刻；未登出（存活或超时）保持 NULL
 );
 CREATE INDEX IF NOT EXISTS idx_login_log_user ON login_log(username, created_at);
+CREATE TABLE IF NOT EXISTS incidents (  -- 用户反馈闭环（知识健康治理 §三B）：对话流「有问题」→ 管理队列
+  id TEXT PRIMARY KEY,                  -- fb-<uuid>
+  username TEXT NOT NULL,               -- 反馈人（会话身份，不信自报）
+  run_id TEXT NOT NULL,                 -- 关联网关任务（messages.run_id 同域，队列联查问题文本）
+  ui_session_id TEXT,                   -- UI 会话（可选，定位对话上下文）
+  category TEXT NOT NULL,               -- 封闭集：数值不对|口径不对|看不懂|其他
+  description TEXT,                     -- 补充说明（≤500 字，选填）
+  status TEXT NOT NULL,                 -- 封闭集与流转：待归因→修复中/驳回；修复中→已发布/驳回；驳回→待归因
+  resolution_note TEXT,                 -- 处置说明（管理员可编辑）
+  fix_commit TEXT,                      -- 知识修复过发布门后的 commit sha（8-40 hex；已发布必填）
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_incidents_dedup ON incidents(username, run_id, category, created_at);

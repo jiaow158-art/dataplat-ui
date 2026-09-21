@@ -66,14 +66,16 @@ export interface LoginLogRow {
   logout_at: number | null;
 }
 
-/** M4-B5 留痕动作封闭集（user_disable/user_enable 为 B2 用户管理页预留）。 */
+/** M4-B5 留痕动作封闭集（user_disable/user_enable 为 B2 用户管理页预留；
+ *  incident_update 为反馈闭环队列的每次 PATCH 留痕）。 */
 export type AdminAuditAction =
   | "user_create"
   | "user_disable"
   | "user_enable"
   | "password_reset"
   | "grant_admin"
-  | "revoke_admin";
+  | "revoke_admin"
+  | "incident_update";
 
 export interface AdminAuditRow {
   id: string;
@@ -82,6 +84,49 @@ export interface AdminAuditRow {
   target: string;
   detail: string | null;
   created_at: number;
+}
+
+// ── 用户反馈闭环（知识健康治理 §三B）：封闭集与行形态 ─────────────────────────────
+
+/** 反馈分类封闭集（UI 下拉四选一）。 */
+export const FEEDBACK_CATEGORIES = ["数值不对", "口径不对", "看不懂", "其他"] as const;
+export type FeedbackCategory = (typeof FEEDBACK_CATEGORIES)[number];
+
+/** incident 状态封闭集（流转矩阵见 app.ts）。 */
+export const INCIDENT_STATUSES = ["待归因", "修复中", "已发布", "驳回"] as const;
+export type IncidentStatus = (typeof INCIDENT_STATUSES)[number];
+
+export interface IncidentRow {
+  id: string;
+  username: string;
+  run_id: string;
+  ui_session_id: string | null;
+  category: string;
+  description: string | null;
+  status: string;
+  resolution_note: string | null;
+  fix_commit: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+/** 队列行：联 messages 按 run_id 带出的问题文本（无对应消息行为 null）。 */
+export interface IncidentQueueRow extends IncidentRow {
+  question: string | null;
+}
+
+export interface InsertIncidentInput {
+  username: string;
+  runId: string;
+  uiSessionId?: string;
+  category: string;
+  description?: string;
+}
+
+export interface UpdateIncidentPatch {
+  status?: string;
+  resolution_note?: string | null;
+  fix_commit?: string | null;
 }
 
 /** 建库：DATA_DIR 下 bff.db，WAL 断言（对齐网关 src/server/index.ts 的启动围栏）。 */
@@ -329,5 +374,71 @@ export class BffStore {
 
   updateMessageStatus(runId: string, status: string): boolean {
     return this.db.prepare("UPDATE messages SET status = ? WHERE run_id = ?").run(status, runId).changes > 0;
+  }
+
+  // ---------- 用户反馈闭环（知识健康治理 §三B：incidents 记账） ----------
+
+  insertIncident(input: InsertIncidentInput): IncidentRow {
+    const ts = this.now();
+    const row: IncidentRow = {
+      id: `fb-${randomUUID()}`,
+      username: input.username,
+      run_id: input.runId,
+      ui_session_id: input.uiSessionId ?? null,
+      category: input.category,
+      description: input.description ?? null,
+      status: "待归因",
+      resolution_note: null,
+      fix_commit: null,
+      created_at: ts,
+      updated_at: ts,
+    };
+    this.db
+      .prepare(
+        `INSERT INTO incidents (id, username, run_id, ui_session_id, category, description, status, resolution_note, fix_commit, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(row.id, row.username, row.run_id, row.ui_session_id, row.category, row.description, row.status, row.resolution_note, row.fix_commit, row.created_at, row.updated_at);
+    return row;
+  }
+
+  /** 提交幂等窗口命中行：同用户同 run 同分类且 created_at 落在 now-withinMs 内（新到旧取一）。 */
+  findRecentDuplicateIncident(username: string, runId: string, category: string, withinMs: number): IncidentRow | undefined {
+    return this.db
+      .prepare(
+        `SELECT * FROM incidents WHERE username = ? AND run_id = ? AND category = ? AND created_at >= ?
+         ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+      )
+      .get(username, runId, category, this.now() - withinMs) as IncidentRow | undefined;
+  }
+
+  /** 管理队列：倒序；联 messages 按 run_id 带出问题文本（run_id 有唯一索引，1:1 不放大）。 */
+  listIncidents(status: string | undefined, limit: number): IncidentQueueRow[] {
+    const sql = `SELECT i.*, m.question AS question
+                 FROM incidents i LEFT JOIN messages m ON m.run_id = i.run_id
+                 ${status ? "WHERE i.status = ?" : ""}
+                 ORDER BY i.created_at DESC, i.rowid DESC LIMIT ?`;
+    return (status
+      ? this.db.prepare(sql).all(status, limit)
+      : this.db.prepare(sql).all(limit)) as IncidentQueueRow[];
+  }
+
+  getIncident(id: string): IncidentRow | undefined {
+    return this.db.prepare("SELECT * FROM incidents WHERE id = ?").get(id) as IncidentRow | undefined;
+  }
+
+  /** 应用补丁并写 updated_at；返回更新后的行（id 不存在返回 undefined）。 */
+  updateIncident(id: string, patch: UpdateIncidentPatch): IncidentRow | undefined {
+    const cur = this.getIncident(id);
+    if (!cur) return undefined;
+    const next = {
+      status: patch.status ?? cur.status,
+      resolution_note: patch.resolution_note !== undefined ? patch.resolution_note : cur.resolution_note,
+      fix_commit: patch.fix_commit !== undefined ? patch.fix_commit : cur.fix_commit,
+    };
+    this.db
+      .prepare("UPDATE incidents SET status = ?, resolution_note = ?, fix_commit = ?, updated_at = ? WHERE id = ?")
+      .run(next.status, next.resolution_note, next.fix_commit, this.now(), id);
+    return this.getIncident(id);
   }
 }
