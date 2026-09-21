@@ -1,7 +1,9 @@
 // UI-T6：进行中/刚完成的一次提问（live turn）——SSE 六类事件全渲染。
 // 结构：用户问题气泡 → 过程区（stage 状态条 + sql 折叠条）→ 回答气泡 → 报告卡片 → 终态条。
+// 终态有回答时挂「有问题」反馈入口（反馈闭环 §三B）。
 import { useEffect, useState } from "react";
 import { useTaskStream, type SqlRecord } from "../hooks/useTaskStream";
+import FeedbackControl from "./FeedbackControl";
 import Markdown from "./Markdown";
 import ReportCard from "./ReportCard";
 
@@ -9,11 +11,13 @@ interface RunStreamProps {
   runId: string;
   question: string;
   startedAt: number;
+  /** 反馈提交时随行（可选）——定位对话上下文。 */
+  uiSessionId?: string;
   onRetry: (question: string) => void;
   onTerminal?: () => void;
 }
 
-export default function RunStream({ runId, question, startedAt, onRetry, onTerminal }: RunStreamProps) {
+export default function RunStream({ runId, question, startedAt, uiSessionId, onRetry, onTerminal }: RunStreamProps) {
   const s = useTaskStream(runId, onTerminal);
   const [now, setNow] = useState(() => Date.now());
 
@@ -40,6 +44,7 @@ export default function RunStream({ runId, question, startedAt, onRetry, onTermi
           </div>
         )}
         {s.reportPath && <ReportCard runId={runId} />}
+        {s.terminal && s.answer && <FeedbackControl runId={runId} uiSessionId={uiSessionId} />}
         {s.error && <ErrorBar code={s.error.code} message={s.error.message} onRetry={() => onRetry(question)} />}
         {s.done && <DoneBar info={s.done} fromStatus={s.terminalFromStatus} />}
       </div>

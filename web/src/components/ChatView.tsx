@@ -11,7 +11,7 @@ import RunStream from "./RunStream";
 
 type Turn =
   | { kind: "history"; row: MessageRow }
-  | { kind: "live"; runId: string; question: string; startedAt: number }
+  | { kind: "live"; runId: string; question: string; startedAt: number; uiSessionId?: string }
   | { kind: "submitting"; question: string }
   | { kind: "submit-failed"; question: string; message: string };
 
@@ -50,7 +50,7 @@ export default function ChatView({ sessionId, sessionTitle, onFirstAsk, onSessio
           turns: rows.map((row): Turn =>
             isTerminalStatus(row.status)
               ? { kind: "history", row }
-              : { kind: "live", runId: row.run_id, question: row.question, startedAt: row.created_at },
+              : { kind: "live", runId: row.run_id, question: row.question, startedAt: row.created_at, uiSessionId: row.ui_session_id },
           ),
         });
       })
@@ -89,7 +89,7 @@ export default function ChatView({ sessionId, sessionTitle, onFirstAsk, onSessio
       if (!sessionId) {
         onFirstAsk(r.ui_session_id); // 重载为真实会话视图（新消息行 status=queued → live）
       } else {
-        setTurns((t) => t.map((x) => (x.kind === "submitting" && x.question === question ? { kind: "live", runId: r.run_id, question, startedAt: Date.now() } : x)));
+        setTurns((t) => t.map((x) => (x.kind === "submitting" && x.question === question ? { kind: "live", runId: r.run_id, question, startedAt: Date.now(), uiSessionId: r.ui_session_id } : x)));
         onSessionActivity();
       }
     } catch (err) {
@@ -130,6 +130,7 @@ export default function ChatView({ sessionId, sessionTitle, onFirstAsk, onSessio
                 runId={t.runId}
                 question={t.question}
                 startedAt={t.startedAt}
+                uiSessionId={t.uiSessionId}
                 onRetry={(q) => {
                   setTurns((xs) => xs.filter((_, j) => j !== i));
                   void ask(q);

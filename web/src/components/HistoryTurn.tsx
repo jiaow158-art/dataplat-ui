@@ -1,6 +1,7 @@
 // UI-T6：历史回合（BFF messages 记账的静态回显）——切会话时 GET messages 渲染既有问答。
 // 非 run 事件流驱动：answer_md/report_path/status 都是 SSE 途经 BFF 时落账的快照。
 import type { MessageRow } from "../types";
+import FeedbackControl from "./FeedbackControl";
 import Markdown from "./Markdown";
 import ReportCard from "./ReportCard";
 
@@ -23,6 +24,7 @@ export default function HistoryTurn({ row }: { row: MessageRow }) {
           <div className="text-xs text-ink-3">（该次提问无回答记录）</div>
         )}
         {row.report_path && <ReportCard runId={row.run_id} />}
+        {row.answer_md && <FeedbackControl runId={row.run_id} uiSessionId={row.ui_session_id} />}
       </div>
     </div>
   );

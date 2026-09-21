@@ -130,6 +130,27 @@ export interface AuditRunResult {
   } | null;
 }
 
+// ── 用户反馈闭环（知识健康治理 §三B；对齐 server/src/db.ts 封闭集）──────────────────
+
+export type FeedbackCategory = "数值不对" | "口径不对" | "看不懂" | "其他";
+export type IncidentStatus = "待归因" | "修复中" | "已发布" | "驳回";
+
+export interface IncidentRow {
+  id: string;
+  username: string;
+  run_id: string;
+  ui_session_id: string | null;
+  category: FeedbackCategory;
+  description: string | null;
+  status: IncidentStatus;
+  resolution_note: string | null;
+  fix_commit: string | null;
+  created_at: number;
+  updated_at: number;
+  /** 联 messages 按 run_id 带出的问题文本（管理队列直读；无对应消息行为 null）。 */
+  question: string | null;
+}
+
 export interface StatsResult {
   totals: {
     all: number;

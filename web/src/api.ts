@@ -7,6 +7,9 @@ import type {
   AuditDateResult,
   AuditRunResult,
   AuditUserResult,
+  FeedbackCategory,
+  IncidentRow,
+  IncidentStatus,
   MeInfo,
   MessageRow,
   StatsResult,
@@ -77,6 +80,21 @@ export const apiListMessages = (uiSessionId: string) =>
 export const apiTaskStatus = (runId: string) =>
   api<TaskStatus>("GET", `/api/tasks/${encodeURIComponent(runId)}/status`);
 
+// ── 用户反馈闭环（知识健康治理 §三B）──────────────────────────────────────────────
+
+export const apiSubmitFeedback = (
+  runId: string,
+  category: FeedbackCategory,
+  description?: string,
+  uiSessionId?: string,
+) =>
+  api<IncidentRow>("POST", "/api/feedback", {
+    run_id: runId,
+    ui_session_id: uiSessionId,
+    category,
+    description,
+  });
+
 // ── 管理后台（M4-B2/B3/B4；cookie 会话 + BFF 侧 admin 守卫） ────────────────────────
 
 export const apiAdminUsers = () => api<AdminUserRow[]>("GET", "/api/admin/users");
@@ -100,3 +118,12 @@ export const apiAdminAuditDate = (date: string) =>
 export const apiAdminStats = () => api<StatsResult>("GET", "/api/admin/stats");
 export const apiAdminSuggest = (q: string) =>
   api<{ users: string[]; run_ids: string[] }>("GET", `/api/admin/audit/suggest?q=${encodeURIComponent(q)}`);
+export const apiAdminIncidents = (status?: string, limit = 100) =>
+  api<IncidentRow[]>(
+    "GET",
+    `/api/admin/incidents?${status ? `status=${encodeURIComponent(status)}&` : ""}limit=${limit}`,
+  );
+export const apiAdminUpdateIncident = (
+  id: string,
+  body: { status?: IncidentStatus; resolution_note?: string; fix_commit?: string },
+) => api<IncidentRow>("PATCH", `/api/admin/incidents/${encodeURIComponent(id)}`, body);
