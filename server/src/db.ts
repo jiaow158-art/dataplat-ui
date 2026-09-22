@@ -67,7 +67,8 @@ export interface LoginLogRow {
 }
 
 /** M4-B5 留痕动作封闭集（user_disable/user_enable 为 B2 用户管理页预留；
- *  incident_update 为反馈闭环队列的每次 PATCH 留痕）。 */
+ *  incident_update 为反馈闭环队列的每次 PATCH 留痕；
+ *  knowledge_publish / domain_request_update 为知识库管理与域申请留痕）。 */
 export type AdminAuditAction =
   | "user_create"
   | "user_disable"
@@ -75,7 +76,9 @@ export type AdminAuditAction =
   | "password_reset"
   | "grant_admin"
   | "revoke_admin"
-  | "incident_update";
+  | "incident_update"
+  | "knowledge_publish"
+  | "domain_request_update";
 
 export interface AdminAuditRow {
   id: string;
@@ -127,6 +130,39 @@ export interface UpdateIncidentPatch {
   status?: string;
   resolution_note?: string | null;
   fix_commit?: string | null;
+}
+
+// ── 域申请队列（知识健康治理 §四C 扩域入口）：封闭集与行形态 ────────────────────────
+
+/** 域申请状态封闭集（流转矩阵见 app.ts）。 */
+export const DOMAIN_REQUEST_STATUSES = ["待受理", "受理", "搁置", "驳回"] as const;
+export type DomainRequestStatus = (typeof DOMAIN_REQUEST_STATUSES)[number];
+
+/** 急迫度封闭集。 */
+export const URGENCY_LEVELS = ["高", "中", "低"] as const;
+export type UrgencyLevel = (typeof URGENCY_LEVELS)[number];
+
+export interface DomainRequestRow {
+  id: string;
+  domain_name: string;
+  example_questions: string | null;
+  urgency: string;
+  username: string;
+  status: string;
+  note: string | null;
+  created_at: number;
+}
+
+export interface InsertDomainRequestInput {
+  username: string;
+  domainName: string;
+  exampleQuestions?: string;
+  urgency: string;
+}
+
+export interface UpdateDomainRequestPatch {
+  status?: string;
+  note?: string | null;
 }
 
 /** 建库：DATA_DIR 下 bff.db，WAL 断言（对齐网关 src/server/index.ts 的启动围栏）。 */
@@ -440,5 +476,50 @@ export class BffStore {
       .prepare("UPDATE incidents SET status = ?, resolution_note = ?, fix_commit = ?, updated_at = ? WHERE id = ?")
       .run(next.status, next.resolution_note, next.fix_commit, this.now(), id);
     return this.getIncident(id);
+  }
+
+  // ---------- 域申请队列（知识健康治理 §四C：扩域工厂的用户入口） ----------
+
+  insertDomainRequest(input: InsertDomainRequestInput): DomainRequestRow {
+    const row: DomainRequestRow = {
+      id: `dr-${randomUUID()}`,
+      domain_name: input.domainName,
+      example_questions: input.exampleQuestions ?? null,
+      urgency: input.urgency,
+      username: input.username,
+      status: "待受理",
+      note: null,
+      created_at: this.now(),
+    };
+    this.db
+      .prepare(
+        `INSERT INTO domain_requests (id, domain_name, example_questions, urgency, username, status, note, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(row.id, row.domain_name, row.example_questions, row.urgency, row.username, row.status, row.note, row.created_at);
+    return row;
+  }
+
+  /** 管理队列：倒序（新到旧），可选 status 过滤。 */
+  listDomainRequests(status: string | undefined, limit: number): DomainRequestRow[] {
+    const sql = `SELECT * FROM domain_requests ${status ? "WHERE status = ?" : ""}
+                 ORDER BY created_at DESC, rowid DESC LIMIT ?`;
+    return (status
+      ? this.db.prepare(sql).all(status, limit)
+      : this.db.prepare(sql).all(limit)) as DomainRequestRow[];
+  }
+
+  getDomainRequest(id: string): DomainRequestRow | undefined {
+    return this.db.prepare("SELECT * FROM domain_requests WHERE id = ?").get(id) as DomainRequestRow | undefined;
+  }
+
+  /** 应用补丁；返回更新后的行（id 不存在返回 undefined）。 */
+  updateDomainRequest(id: string, patch: UpdateDomainRequestPatch): DomainRequestRow | undefined {
+    const cur = this.getDomainRequest(id);
+    if (!cur) return undefined;
+    this.db
+      .prepare("UPDATE domain_requests SET status = ?, note = ? WHERE id = ?")
+      .run(patch.status ?? cur.status, patch.note !== undefined ? patch.note : cur.note, id);
+    return this.getDomainRequest(id);
   }
 }

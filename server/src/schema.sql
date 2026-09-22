@@ -67,3 +67,14 @@ CREATE TABLE IF NOT EXISTS incidents (  -- 用户反馈闭环（知识健康治�
 );
 CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_incidents_dedup ON incidents(username, run_id, category, created_at);
+CREATE TABLE IF NOT EXISTS domain_requests ( -- 域申请队列（知识健康治理 §四C 扩域入口）：用户申请新域 → 管理受理
+  id TEXT PRIMARY KEY,                  -- dr-<uuid>
+  domain_name TEXT NOT NULL,            -- 申请的域（2-40 字）
+  example_questions TEXT,               -- 典型问题（≤1000 字，选填——受理后排场景实录）
+  urgency TEXT NOT NULL,                -- 封闭集：高|中|低
+  username TEXT NOT NULL,               -- 申请人（会话身份，不信自报）
+  status TEXT NOT NULL,                 -- 封闭集与流转：待受理→受理/搁置/驳回；受理→搁置/驳回；搁置→受理/驳回；驳回→待受理
+  note TEXT,                            -- 处置备注（管理员可编辑）
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_domain_requests_status ON domain_requests(status, created_at);

@@ -7,14 +7,19 @@ import type {
   AuditDateResult,
   AuditRunResult,
   AuditUserResult,
+  DomainRequestRow,
+  DomainRequestStatus,
   FeedbackCategory,
   IncidentRow,
   IncidentStatus,
+  KnowledgeFileMeta,
+  KnowledgePublishResult,
   MeInfo,
   MessageRow,
   StatsResult,
   TaskStatus,
   UiSession,
+  UrgencyLevel,
 } from "./types";
 
 export class ApiError extends Error {
@@ -127,3 +132,26 @@ export const apiAdminUpdateIncident = (
   id: string,
   body: { status?: IncidentStatus; resolution_note?: string; fix_commit?: string },
 ) => api<IncidentRow>("PATCH", `/api/admin/incidents/${encodeURIComponent(id)}`, body);
+
+// ── 知识库管理入口 + 域申请（知识健康治理 §四）──────────────────────────────────────
+
+export const apiAdminKnowledgeFiles = () => api<KnowledgeFileMeta[]>("GET", "/api/admin/knowledge/files");
+export const apiAdminKnowledgeFile = (path: string) =>
+  api<{ path: string; content: string }>("GET", `/api/admin/knowledge/file?path=${encodeURIComponent(path)}`);
+/** 保存即发布：走 harness 发布脚本过 C2 门（79 场景离线回归）；门拒时 ok:false 且内容已回滚。 */
+export const apiAdminKnowledgePublish = (path: string, content: string, message: string) =>
+  api<KnowledgePublishResult>("POST", "/api/admin/knowledge/publish", { path, content, message });
+
+export const apiSubmitDomainRequest = (
+  domain_name: string,
+  urgency: UrgencyLevel,
+  example_questions?: string,
+) => api<DomainRequestRow>("POST", "/api/domain-requests", { domain_name, urgency, example_questions });
+
+export const apiAdminDomainRequests = (status?: DomainRequestStatus, limit = 200) =>
+  api<DomainRequestRow[]>(
+    "GET",
+    `/api/admin/domain-requests?${status ? `status=${encodeURIComponent(status)}&` : ""}limit=${limit}`,
+  );
+export const apiAdminUpdateDomainRequest = (id: string, body: { status?: DomainRequestStatus; note?: string }) =>
+  api<DomainRequestRow>("PATCH", `/api/admin/domain-requests/${encodeURIComponent(id)}`, body);

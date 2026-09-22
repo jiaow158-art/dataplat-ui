@@ -34,6 +34,7 @@ cd web && npm install && npm run dev   # http://localhost:5173
 | `AUTH_TOKEN` | （必填） | 网关 Bearer——只在此处，绝不进前端 |
 | `DATA_DIR` | `./data` | SQLite 与记账数据目录 |
 | `REPORTS_DIR` | （必填） | 网关 GATEWAY_REPORTS_DIR 同目录只读访问 |
+| `HARNESS_DIR` | （可选） | dataprojai-2harness 仓根——知识库管理入口（只读列 skills 文件 + 调 scripts/knowledge-publish.mjs 过 C2 门发布）；未设置时知识端点 503 |
 
 ## 红线
 

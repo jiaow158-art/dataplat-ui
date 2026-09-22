@@ -20,4 +20,4 @@ db.close();
 console.log(`[migrate] ${dbFile}`);
 console.log(`[migrate] users.is_admin ${cols.includes("is_admin") ? "已就绪" : "缺失(异常)"}`);
 console.log(`[migrate] ${hadIsAdmin ? "本就含 is_admin——本次无列变更" : "已补列 is_admin INTEGER NOT NULL DEFAULT 0（存量行默认 0）"}`);
-console.log("[migrate] admin_audit / login_log / incidents 表已确保存在（CREATE TABLE IF NOT EXISTS）");
+console.log("[migrate] admin_audit / login_log / incidents / domain_requests 表已确保存在（CREATE TABLE IF NOT EXISTS）");

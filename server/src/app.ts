@@ -8,10 +8,18 @@ import express, { type Express, type Request, type Response } from "express";
 import { compare, hash, hashSync } from "bcryptjs";
 import { randomBytes, randomUUID } from "node:crypto";
 import type { IncomingMessage } from "node:http";
-import { basename, join, resolve, sep } from "node:path";
-import { readFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { basename, join, relative, resolve, sep } from "node:path";
+import { tmpdir } from "node:os";
+import { readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import type Database from "better-sqlite3";
-import { FEEDBACK_CATEGORIES, INCIDENT_STATUSES, type BffStore } from "./db.ts";
+import {
+  DOMAIN_REQUEST_STATUSES,
+  FEEDBACK_CATEGORIES,
+  INCIDENT_STATUSES,
+  URGENCY_LEVELS,
+  type BffStore,
+} from "./db.ts";
 import { GatewayClient, GatewayUnreachableError, type GatewayResponse } from "./gateway.ts";
 import { SseFrameParser, type SseEvent } from "./sse-parser.ts";
 import {
@@ -46,6 +54,10 @@ export interface BffConfig {
   staticDir?: string;
   /** 网关 SQLite 库路径（M4-B3/B4 审计与统计只读直连；env GW_DB_PATH。未设置时审计/统计端点 503 GW_DB_UNSET）。 */
   gwDbPath?: string;
+  /** harness 仓根目录（知识库管理入口：只读列 skills 文件 + 调 scripts/knowledge-publish.mjs；
+   *  env HARNESS_DIR。未设置时知识端点 503 HARNESS_DIR_UNSET。绝不由此路径写 skills——
+   *  语义编辑唯一通道是发布脚本里的 git commit 过 C2 门）。 */
+  harnessDir?: string;
   /** 登录失败人为慢响应下限 ms（spec §6.5 防爆破计时，默认 400）。 */
   loginMinFailMs?: number;
   /** 同用户名登录尝试上限（次/分钟，默认 5）。 */
@@ -341,6 +353,172 @@ export function createApp(store: BffStore, config: BffConfig): Express {
       action: "incident_update",
       target: cur.id,
       detail: `${cur.status}→${updated.status}`,
+    });
+    res.json(updated);
+  });
+
+  // ── 知识库管理入口（知识健康治理 §四：编辑发布走 C2 门）──────────────────────────
+  // 红线：BFF 绝不直接写 skills 文件——写操作唯一通道是 harness 仓
+  // scripts/knowledge-publish.mjs（写文件 → git commit → pre-commit 门拒则还原）。
+  // HARNESS_DIR 只用于只读列文件 + 调该脚本；eval_dataset.json 不在白名单（不提供编辑）。
+
+  /** 与 harness scripts/knowledge-publish.mjs 的 PATH_RE 逐字同步（跨仓契约，改须双边）。 */
+  const KNOWLEDGE_PATH_RE = /^skills\/[a-z0-9-]+\/(references\/[A-Za-z0-9_.-]+\.md|SKILL\.md)$/;
+
+  // 列 skills 下全部可编辑 md（路径/域/大小/mtime，升序）
+  app.get("/api/admin/knowledge/files", (_req, res) => {
+    if (!config.harnessDir) return sendError(res, 503, "HARNESS_DIR_UNSET", "harness dir not configured");
+    const skillsRoot = join(config.harnessDir, "skills");
+    let entries;
+    try {
+      entries = readdirSync(skillsRoot, { recursive: true, withFileTypes: true });
+    } catch {
+      return res.json([]); // skills 目录缺失 = 无可编辑文件（不报错，界面照常可用）
+    }
+    const files: { path: string; domain: string; size: number; mtime: number }[] = [];
+    for (const e of entries) {
+      if (!e.isFile()) continue;
+      const rel = relative(skillsRoot, join(e.parentPath, e.name)).split(sep).join("/");
+      if (!KNOWLEDGE_PATH_RE.test(`skills/${rel}`)) continue;
+      const st = statSync(join(skillsRoot, rel));
+      files.push({ path: `skills/${rel}`, domain: rel.split("/")[0], size: st.size, mtime: Math.round(st.mtimeMs) });
+    }
+    files.sort((a, b) => (a.path < b.path ? -1 : 1));
+    res.json(files);
+  });
+
+  // 读单文件内容（白名单校验，越界 403——与发布脚本同一正则）
+  app.get("/api/admin/knowledge/file", (req, res) => {
+    if (!config.harnessDir) return sendError(res, 503, "HARNESS_DIR_UNSET", "harness dir not configured");
+    const p = req.query.path;
+    if (typeof p !== "string" || !p) return sendError(res, 400, "BAD_REQUEST", "path is required");
+    if (!KNOWLEDGE_PATH_RE.test(p)) return sendError(res, 403, "PATH_FORBIDDEN", "path outside knowledge whitelist");
+    let content: string;
+    try {
+      content = readFileSync(join(config.harnessDir, p), "utf8");
+    } catch {
+      return sendError(res, 404, "NOT_FOUND", "file not found");
+    }
+    res.json({ path: p, content });
+  });
+
+  /** 调发布脚本（异步等终态——eval 分钟级，绝不 spawnSync 阻塞事件循环）。 */
+  const runPublishScript = (
+    harnessDir: string,
+    file: string,
+    contentFile: string,
+    message: string,
+  ): Promise<{ stdout: string; stderr: string }> =>
+    new Promise((resolve) => {
+      const child = spawn(
+        process.execPath,
+        [join(harnessDir, "scripts", "knowledge-publish.mjs"), "--file", file, "--content-file", contentFile, "--message", message],
+        { cwd: harnessDir },
+      );
+      const out: Buffer[] = [];
+      const err: Buffer[] = [];
+      child.stdout.on("data", (c: Buffer) => out.push(c));
+      child.stderr.on("data", (c: Buffer) => err.push(c));
+      child.on("error", (e) => resolve({ stdout: "", stderr: String(e) }));
+      child.on("close", () => resolve({ stdout: Buffer.concat(out).toString("utf8"), stderr: Buffer.concat(err).toString("utf8") }));
+    });
+
+  // 发布：content 落临时文件 → 调脚本 → 透传结果 JSON（ok:true=200；门拒也是 200 业务结果）。
+  // 无论成败均留痕 admin_audit（ok+sha / gate 拒 / 其他 reason）。
+  app.post("/api/admin/knowledge/publish", async (req, res) => {
+    if (!config.harnessDir) return sendError(res, 503, "HARNESS_DIR_UNSET", "harness dir not configured");
+    const body = (req.body ?? {}) as { path?: unknown; content?: unknown; message?: unknown };
+    if (
+      typeof body.path !== "string" || typeof body.content !== "string" ||
+      typeof body.message !== "string" || !body.message.trim() || body.message.length > 200
+    ) {
+      return sendError(res, 400, "BAD_REQUEST", "path, content and message (1..200 chars) are required");
+    }
+    if (!KNOWLEDGE_PATH_RE.test(body.path)) {
+      return sendError(res, 403, "PATH_FORBIDDEN", "path outside knowledge whitelist");
+    }
+    const tmp = join(tmpdir(), `kpub-${randomUUID()}`);
+    writeFileSync(tmp, body.content, "utf8");
+    try {
+      const r = await runPublishScript(config.harnessDir, body.path, tmp, body.message);
+      const lastLine = r.stdout.trim().split("\n").pop() ?? "";
+      let parsed: { ok?: unknown; sha?: unknown; eval_summary?: unknown; reason?: unknown; gate_output?: unknown } | null = null;
+      try {
+        parsed = JSON.parse(lastLine);
+      } catch {
+        /* 非 JSON 输出按脚本故障处理 */
+      }
+      if (!parsed || typeof parsed.ok !== "boolean") {
+        console.error(`[knowledge] 发布脚本异常 path=${body.path}: ${r.stderr.slice(-500)}`);
+        return sendError(res, 500, "INTERNAL", "publish script failed");
+      }
+      store.insertAdminAudit({
+        username: req.user!,
+        action: "knowledge_publish",
+        target: body.path,
+        detail: parsed.ok
+          ? `ok sha=${String(parsed.sha).slice(0, 12)}`
+          : parsed.reason === "gate"
+            ? "gate 拒"
+            : `未发布(${String(parsed.reason)})`,
+      });
+      res.status(200).json(parsed);
+    } finally {
+      rmSync(tmp, { force: true }); // 临时内容件即弃
+    }
+  });
+
+  // ── 域申请队列·管理面（知识健康治理 §四C 扩域入口）：列表 + 流转；每次 PATCH 留痕 ────
+
+  app.get("/api/admin/domain-requests", (req, res) => {
+    const limit = parseLimit(req.query.limit);
+    if (limit === null) return sendError(res, 400, "BAD_REQUEST", "limit must be an integer between 1 and 500");
+    const status = req.query.status;
+    if (status !== undefined && (typeof status !== "string" || !(DOMAIN_REQUEST_STATUSES as readonly string[]).includes(status))) {
+      return sendError(res, 400, "BAD_REQUEST", `status must be one of ${DOMAIN_REQUEST_STATUSES.join("/")}`);
+    }
+    res.json(store.listDomainRequests(typeof status === "string" ? status : undefined, limit));
+  });
+
+  /** 流转矩阵（封闭集内才允许）：待受理→受理/搁置/驳回；受理/搁置→搁置/受理/驳回互达；驳回→待受理。 */
+  const DOMAIN_REQUEST_TRANSITIONS: Record<string, readonly string[]> = {
+    待受理: ["受理", "搁置", "驳回"],
+    受理: ["搁置", "驳回"],
+    搁置: ["受理", "驳回"],
+    驳回: ["待受理"],
+  };
+
+  app.patch("/api/admin/domain-requests/:id", (req, res) => {
+    const body = (req.body ?? {}) as { status?: unknown; note?: unknown };
+    const cur = store.getDomainRequest(req.params.id);
+    if (!cur) return sendError(res, 404, "NOT_FOUND", "domain request not found");
+    if (body.status === undefined && body.note === undefined) {
+      return sendError(res, 400, "BAD_REQUEST", "nothing to update (status / note)");
+    }
+    if (body.status !== undefined && (typeof body.status !== "string" || !(DOMAIN_REQUEST_STATUSES as readonly string[]).includes(body.status))) {
+      return sendError(res, 400, "BAD_REQUEST", `status must be one of ${DOMAIN_REQUEST_STATUSES.join("/")}`);
+    }
+    if (body.note !== undefined && (typeof body.note !== "string" || body.note.length > 500)) {
+      return sendError(res, 400, "BAD_REQUEST", "note must be a string of at most 500 chars");
+    }
+
+    // 流转约束：status 变更必须在当前状态的可达集内（同值=非流转，放行）
+    let nextStatus = cur.status;
+    const statusChanged = typeof body.status === "string" && body.status !== cur.status;
+    if (statusChanged && !(DOMAIN_REQUEST_TRANSITIONS[cur.status] ?? []).includes(body.status as string)) {
+      return sendError(res, 409, "BAD_TRANSITION", `illegal transition ${cur.status} → ${body.status}`);
+    }
+    if (statusChanged) nextStatus = body.status as string;
+
+    const updated = store.updateDomainRequest(cur.id, {
+      status: nextStatus,
+      note: body.note !== undefined ? (body.note as string) : undefined,
+    })!;
+    store.insertAdminAudit({
+      username: req.user!,
+      action: "domain_request_update",
+      target: cur.id,
+      detail: statusChanged ? `${cur.status}→${updated.status}` : "note",
     });
     res.json(updated);
   });
@@ -659,6 +837,31 @@ export function createApp(store: BffStore, config: BffConfig): Express {
         uiSessionId: body.ui_session_id,
         category: body.category,
         description: body.description,
+      }),
+    );
+  });
+
+  // ── 域申请·提交面（知识健康治理 §四C 扩域入口）：任何登录用户 ─────────────────────
+  // Sidebar「申请新域」表单：域名必填 2-40 字、典型问题 ≤1000 字（选填）、急迫度封闭集三选一。
+  app.post("/api/domain-requests", (req, res) => {
+    const user = req.user!;
+    const body = (req.body ?? {}) as { domain_name?: unknown; example_questions?: unknown; urgency?: unknown };
+    const domain = typeof body.domain_name === "string" ? body.domain_name.trim() : "";
+    if (domain.length < 2 || domain.length > 40) {
+      return sendError(res, 400, "BAD_REQUEST", "domain_name must be 2-40 chars");
+    }
+    if (body.example_questions !== undefined && (typeof body.example_questions !== "string" || body.example_questions.length > 1000)) {
+      return sendError(res, 400, "BAD_REQUEST", "example_questions must be a string of at most 1000 chars");
+    }
+    if (typeof body.urgency !== "string" || !(URGENCY_LEVELS as readonly string[]).includes(body.urgency)) {
+      return sendError(res, 400, "BAD_REQUEST", `urgency must be one of ${URGENCY_LEVELS.join("/")}`);
+    }
+    res.status(201).json(
+      store.insertDomainRequest({
+        username: user,
+        domainName: domain,
+        exampleQuestions: body.example_questions,
+        urgency: body.urgency,
       }),
     );
   });

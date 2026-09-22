@@ -81,7 +81,7 @@ export interface BffHandle {
 }
 
 export async function startBff(
-  opts: { gatewayUrl?: string; reportsDir?: string; staticDir?: string; gwDbPath?: string } = {},
+  opts: { gatewayUrl?: string; reportsDir?: string; staticDir?: string; gwDbPath?: string; harnessDir?: string } = {},
 ): Promise<BffHandle> {
   const root = mkdtempSync(join(tmpdir(), "bff-test-"));
   const db = initDb(root);
@@ -92,6 +92,7 @@ export async function startBff(
     reportsDir: opts.reportsDir, // UI-T7 报告静态服务根目录（不传 = 端点 500）
     staticDir: opts.staticDir, // M3-T1 静态托管（不传 = 无托管，原行为）
     gwDbPath: opts.gwDbPath, // M4-B3/B4 网关库只读直连（不传 = 审计/统计 503 GW_DB_UNSET）
+    harnessDir: opts.harnessDir, // 知识库管理入口（不传 = 知识端点 503 HARNESS_DIR_UNSET）
   });
   const server = app.listen(0, "127.0.0.1");
   const port = await new Promise<number>((resolve, reject) => {

@@ -1,8 +1,9 @@
 // UI-T5 左栏：会话列表（新建/切换/重命名 inline 编辑/删除）+ 当前用户 + 登出。
 // 会话 CRUD 全部走 BFF /api/sessions（记账表；删除不动网关，spec §8）。
+// 知识健康治理 §四C：底部「申请新域」→ 弹层表单 → POST /api/domain-requests。
 import { useState, type KeyboardEvent } from "react";
-import { ApiError, apiDeleteSession, apiRenameSession } from "../api";
-import type { UiSession } from "../types";
+import { ApiError, apiDeleteSession, apiRenameSession, apiSubmitDomainRequest } from "../api";
+import type { UiSession, UrgencyLevel } from "../types";
 
 interface SidebarProps {
   username: string;
@@ -24,6 +25,7 @@ export default function Sidebar(props: SidebarProps) {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [domainOpen, setDomainOpen] = useState(false);
 
   const guard = async (fn: () => Promise<void>) => {
     if (busy) return;
@@ -175,6 +177,16 @@ export default function Sidebar(props: SidebarProps) {
         </div>
       )}
 
+      <div className="border-t border-line px-3 py-2">
+        <button
+          type="button"
+          className="w-full rounded py-1 text-[11px] text-ink-3 transition-colors hover:text-accent-2"
+          onClick={() => setDomainOpen(true)}
+        >
+          ＋ 申请新域
+        </button>
+      </div>
+
       <div className="flex items-center justify-between border-t border-line px-4 py-3">
         <span className="truncate text-xs text-ink-2" title={username}>
           {username}
@@ -187,7 +199,125 @@ export default function Sidebar(props: SidebarProps) {
           登出
         </button>
       </div>
+
+      {domainOpen && <DomainRequestModal onClose={() => setDomainOpen(false)} />}
     </aside>
+  );
+}
+
+/** 申请新域弹层（任何登录用户）：域名 2-40 字 / 典型问题 ≤1000 字 / 急迫度三选一。 */
+function DomainRequestModal({ onClose }: { onClose: () => void }) {
+  const [domain, setDomain] = useState("");
+  const [questions, setQuestions] = useState("");
+  const [urgency, setUrgency] = useState<UrgencyLevel>("中");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  const trimmed = domain.trim();
+  const valid = trimmed.length >= 2 && trimmed.length <= 40;
+
+  const submit = async () => {
+    if (busy || !valid) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await apiSubmitDomainRequest(trimmed, urgency, questions.trim() || undefined);
+      setDone(true);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "提交失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={done ? onClose : undefined}>
+      <div className="w-[26rem] rounded-lg border border-line bg-panel p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        {done ? (
+          <div>
+            <div className="text-sm font-semibold text-good">已提交</div>
+            <div className="mt-2 text-xs text-ink-2">已提交，受理后会联系你。</div>
+            <div className="mt-4 text-right">
+              <button
+                type="button"
+                className="rounded bg-accent px-3 py-1.5 text-xs text-white hover:bg-accent-2"
+                onClick={onClose}
+              >
+                好的
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <div className="text-sm font-semibold text-ink">申请新域</div>
+            <div className="mt-1 text-[11px] text-ink-3">
+              当前未覆盖的业务域（如采购、人力资源等）——受理后会按扩域流程建设知识库。
+            </div>
+            <label className="mt-3 block text-xs text-ink-3">
+              域名（2-40 字）
+              <input
+                autoFocus
+                className="mt-1 w-full rounded border border-line bg-card px-2 py-1.5 text-xs text-ink outline-none focus:border-accent"
+                maxLength={40}
+                placeholder="如：采购域"
+                value={domain}
+                onChange={(e) => setDomain(e.target.value)}
+                disabled={busy}
+              />
+            </label>
+            <label className="mt-3 block text-xs text-ink-3">
+              典型问题（选填，≤1000 字——你平时想问什么）
+              <textarea
+                className="mt-1 h-24 w-full resize-none rounded border border-line bg-card px-2 py-1.5 text-xs text-ink outline-none focus:border-accent"
+                maxLength={1000}
+                placeholder={"如：本月采购金额Top供应商？\n瓷砖原料库存周转如何？"}
+                value={questions}
+                onChange={(e) => setQuestions(e.target.value)}
+                disabled={busy}
+              />
+            </label>
+            <div className="mt-3 text-xs text-ink-3">
+              急迫度
+              <div className="mt-1 flex gap-1">
+                {(["高", "中", "低"] as const).map((u) => (
+                  <button
+                    key={u}
+                    type="button"
+                    className={`rounded px-3 py-1 text-xs transition-colors ${
+                      urgency === u ? "bg-accent-soft text-ink" : "text-ink-3 hover:text-ink"
+                    }`}
+                    onClick={() => setUrgency(u)}
+                    disabled={busy}
+                  >
+                    {u}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {error && <div className="mt-3 text-xs text-bad">{error}</div>}
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                className="rounded border border-line px-3 py-1.5 text-xs text-ink-2 transition-colors hover:border-accent hover:text-ink"
+                disabled={busy}
+                onClick={onClose}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="rounded bg-accent px-3 py-1.5 text-xs text-white hover:bg-accent-2 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={busy || !valid}
+                onClick={() => void submit()}
+              >
+                {busy ? "提交中…" : "提交"}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

@@ -177,3 +177,38 @@ export interface StatsResult {
     created_at: number;
   }[];
 }
+
+// ── 知识库管理入口（知识健康治理 §四；对齐 server/src/app.ts 知识端点与发布脚本结果）──
+
+/** 可编辑知识文件元数据（GET /api/admin/knowledge/files 行形态）。 */
+export interface KnowledgeFileMeta {
+  path: string; // skills/<域>/(references/*.md|SKILL.md)
+  domain: string;
+  size: number; // 字节
+  mtime: number; // ms epoch
+}
+
+/** 发布结果（harness scripts/knowledge-publish.mjs stdout JSON 的透传形态）。 */
+export interface KnowledgePublishResult {
+  ok: boolean;
+  sha?: string; // ok:true 时 40 位 commit sha
+  eval_summary?: string | null; // 门放行摘要行（如 "[knowledge-gate] ✓ …79 PASS…"）
+  reason?: string; // ok:false 时：gate | busy | dirty_index | no_gate | no_change | ...
+  gate_output?: string[]; // reason:gate 时的输出尾部行
+}
+
+// ── 域申请（知识健康治理 §四C 扩域入口；对齐 server/src/db.ts 封闭集）─────────────────
+
+export type DomainRequestStatus = "待受理" | "受理" | "搁置" | "驳回";
+export type UrgencyLevel = "高" | "中" | "低";
+
+export interface DomainRequestRow {
+  id: string;
+  domain_name: string;
+  example_questions: string | null;
+  urgency: UrgencyLevel;
+  username: string;
+  status: DomainRequestStatus;
+  note: string | null;
+  created_at: number;
+}
