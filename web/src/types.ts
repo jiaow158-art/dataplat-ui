@@ -212,3 +212,60 @@ export interface DomainRequestRow {
   note: string | null;
   created_at: number;
 }
+
+// ── M-i3 经营洞察（insight-api 契约镜像；事件对象为 insight.db 行原样 snake_case）──────
+export interface InsightDailyEvent {
+  eventId: string;
+  eventKey: string | null;
+  lifecycle: string;
+  persistDays: number;
+  title: string;
+  summary: string;
+  severity: "major" | "minor";
+  eventType: string;
+  metric: string | null;
+  scope: Record<string, unknown>;
+  period: Record<string, unknown>;
+  facts: Array<{ label: string; value: string }>;
+  score: number;
+  status: string;
+  createdAt: number;
+}
+export interface InsightDaily {
+  briefDate: string;
+  scope: string;
+  dataFreshness: { overall: "ready" | "partial" | "not_ready"; radars: Array<{ detector: string; ready: boolean; detail: string }> };
+  eventCount: number;
+  stale: boolean;
+  events: InsightDailyEvent[];
+}
+export interface InsightEventDetail {
+  event: {
+    event_id: string; event_key: string; lifecycle: string; data_date: string;
+    first_seen_date: string; persist_days: number; detector: string; event_type: string;
+    title: string; summary: string; severity: "major" | "minor"; scope_json: string;
+    facts_json: string; score: number; status: string;
+  };
+  executiveSummary: string;
+  facts: Array<{ label: string; value: string }>;
+  attribution: {
+    status: "pending" | "done" | "degraded" | "failed";
+    analysisId: string | null;
+    summary: string | null;
+    path: Array<{ level: string; contribution: string }>;
+    findings: Array<{ text: string; evidence: string }>;
+    waterfall: Array<{ name: string; value: number }>;
+    entities: Array<{ name: string; type: string; delta: string }>;
+    runId: string | null;
+    reportPath: string | null;
+  };
+  evidence: Array<{ finding_id: string; detector: string; metrics: Record<string, unknown>; norm_score: number; is_late: number }>;
+  suggestedActions: string[];
+  followupPrompts: string[];
+}
+export interface InsightTimelineItem {
+  eventId: string; title: string; severity: "major" | "minor"; dataDate: string; createdAt: number;
+}
+export interface InsightFollowupResult {
+  uiSessionId: string; seedQuestion: string; title: string;
+}

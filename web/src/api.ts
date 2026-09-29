@@ -12,6 +12,10 @@ import type {
   FeedbackCategory,
   IncidentRow,
   IncidentStatus,
+  InsightDaily,
+  InsightEventDetail,
+  InsightFollowupResult,
+  InsightTimelineItem,
   KnowledgeFileMeta,
   KnowledgePublishResult,
   MeInfo,
@@ -155,3 +159,14 @@ export const apiAdminDomainRequests = (status?: DomainRequestStatus, limit = 200
   );
 export const apiAdminUpdateDomainRequest = (id: string, body: { status?: DomainRequestStatus; note?: string }) =>
   api<DomainRequestRow>("PATCH", `/api/admin/domain-requests/${encodeURIComponent(id)}`, body);
+
+// ── M-i3 经营洞察 ─────────────────────────────────────────────────────────────────
+export const apiInsightEnabled = () => api<{ enabled: boolean }>("GET", "/api/insight/enabled");
+export const apiInsightDaily = (date?: string) =>
+  api<InsightDaily>("GET", `/api/insight/daily${date ? `?date=${encodeURIComponent(date)}` : ""}`);
+export const apiInsightEvent = (id: string) =>
+  api<InsightEventDetail>("GET", `/api/insight/events/${encodeURIComponent(id)}`);
+export const apiInsightTimeline = (days = 30) =>
+  api<InsightTimelineItem[]>("GET", `/api/insight/timeline?days=${days}`);
+export const apiInsightFollowup = (eventId: string, prompt?: string) =>
+  api<InsightFollowupResult>("POST", `/api/insight/events/${encodeURIComponent(eventId)}/followup`, prompt ? { prompt } : {});
