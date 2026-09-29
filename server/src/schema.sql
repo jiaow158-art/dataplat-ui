@@ -78,3 +78,19 @@ CREATE TABLE IF NOT EXISTS domain_requests ( -- 域申请队列（知识健康�
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_domain_requests_status ON domain_requests(status, created_at);
+CREATE TABLE IF NOT EXISTS user_flags (  -- M-i3 insight 灰度（spec §13）：flag 只控入口，不做数据权限
+  username TEXT NOT NULL,
+  flag TEXT NOT NULL,                    -- 'insight_cockpit'
+  enabled INTEGER NOT NULL DEFAULT 0,
+  granted_at INTEGER NOT NULL,
+  PRIMARY KEY (username, flag)
+);
+CREATE TABLE IF NOT EXISTS followup_log ( -- 事件追问审计（v1.2.4：落 BFF 记账库，不进 insight.db）
+  id TEXT PRIMARY KEY,                   -- fu-<uuid>
+  username TEXT NOT NULL,                -- 追问人（会话身份）
+  event_id TEXT NOT NULL,                -- insight 事件
+  ui_session_id TEXT NOT NULL,           -- 种子会话
+  prompt TEXT,                           -- 用户自定义意图（可空=默认分析）
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_followup_event ON followup_log(event_id, created_at);

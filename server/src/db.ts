@@ -522,4 +522,32 @@ export class BffStore {
       .run(patch.status ?? cur.status, patch.note !== undefined ? patch.note : cur.note, id);
     return this.getDomainRequest(id);
   }
+
+  // ---------- insight 灰度与追问审计（M-i3：flag 只控入口，不做数据权限；spec §13） ----------
+
+  /** insight 驾驶舱入口开关：无行=关（未知用户同样关）。 */
+  insightEnabled(username: string): boolean {
+    const row = this.db
+      .prepare("SELECT enabled FROM user_flags WHERE username=? AND flag='insight_cockpit'")
+      .get(username) as { enabled: number } | undefined;
+    return row?.enabled === 1;
+  }
+
+  /** 置灰度开关（幂等 upsert，granted_at 随最近一次写入）；flag 封闭集当前仅 insight_cockpit。 */
+  setFlag(username: string, flag: string, enabled: boolean): void {
+    if (flag !== "insight_cockpit") throw new Error(`unknown flag: ${flag}`);
+    this.db
+      .prepare(
+        `INSERT INTO user_flags (username, flag, enabled, granted_at) VALUES (?, 'insight_cockpit', ?, ?)
+         ON CONFLICT (username, flag) DO UPDATE SET enabled=excluded.enabled, granted_at=excluded.granted_at`,
+      )
+      .run(username, enabled ? 1 : 0, this.now());
+  }
+
+  /** 事件追问审计一行（v1.2.4：落 BFF 记账库，不进 insight.db）；prompt 可空=默认分析。 */
+  insertFollowup(id: string, username: string, eventId: string, uiSessionId: string, prompt: string | null): void {
+    this.db
+      .prepare("INSERT INTO followup_log (id, username, event_id, ui_session_id, prompt, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(id, username, eventId, uiSessionId, prompt, this.now());
+  }
 }
