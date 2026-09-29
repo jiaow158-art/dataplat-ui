@@ -2,12 +2,14 @@
 // v1 无路由库：登录/主页由 boot 状态切换；管理后台（M4）为 state 路由子视图——
 // 仅 /api/me.is_admin=1 时渲染入口，chat/admin 两视图共享侧栏导航。
 import { useCallback, useEffect, useState } from "react";
-import { ApiError, apiCreateSession, apiListSessions, apiLogout, apiMe } from "./api";
+import { ApiError, apiCreateSession, apiInsightEnabled, apiListSessions, apiLogout, apiMe } from "./api";
 import type { UiSession } from "./types";
 import LoginScreen from "./components/LoginScreen";
 import Sidebar from "./components/Sidebar";
 import ChatView from "./components/ChatView";
 import AdminView from "./components/admin/AdminView";
+import OperatingDashboardPage from "./components/insights/OperatingDashboardPage";
+import EventDetailPage from "./components/insights/EventDetailPage";
 
 type Boot = { kind: "loading" } | { kind: "login" } | { kind: "ready"; username: string; isAdmin: boolean };
 
@@ -15,12 +17,18 @@ export default function App() {
   const [boot, setBoot] = useState<Boot>({ kind: "loading" });
   const [sessions, setSessions] = useState<UiSession[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [view, setView] = useState<"chat" | "admin">("chat");
+  const [view, setView] = useState<"chat" | "admin" | "insights">("chat");
+  const [insightsOn, setInsightsOn] = useState(false);
+  const [openEventId, setOpenEventId] = useState<string | null>(null);
+  const [followupSeed, setFollowupSeed] = useState<{ sessionId: string; question: string } | null>(null);
 
   const enter = useCallback(async (username: string, isAdmin: boolean) => {
     setSessions(await apiListSessions());
+    // 驾驶舱 flag 探测（两条进入路径都经 enter：启动 /api/me 链与登录成功链）；失败=功能关，不挡登录。
+    const on = await apiInsightEnabled().then((r) => r.enabled).catch(() => false);
+    setInsightsOn(on);
     setActiveId(null); // 进入时停在新会话态（首问自动建会话，UI-T6）
-    setView("chat");
+    setView(on ? "insights" : "chat"); // flag 开：登录默认落地驾驶舱
     setBoot({ kind: "ready", username, isAdmin });
   }, []);
 
@@ -61,6 +69,11 @@ export default function App() {
         activeId={activeId}
         isAdmin={boot.isAdmin}
         onAdmin={() => setView("admin")}
+        insightsEnabled={insightsOn}
+        onInsights={() => {
+          setView("insights");
+          setOpenEventId(null);
+        }}
         onSelect={setActiveId}
         onNew={async () => {
           const s = await apiCreateSession();
@@ -83,6 +96,21 @@ export default function App() {
       />
       {view === "admin" ? (
         <AdminView username={boot.username} onBack={() => setView("chat")} />
+      ) : view === "insights" && insightsOn ? (
+        openEventId ? (
+          <EventDetailPage
+            eventId={openEventId}
+            onBack={() => setOpenEventId(null)}
+            onFollowed={(r) => {
+              setFollowupSeed({ sessionId: r.uiSessionId, question: r.seedQuestion });
+              setActiveId(r.uiSessionId);
+              setView("chat");
+              void refreshSessions();
+            }}
+          />
+        ) : (
+          <OperatingDashboardPage onOpenEvent={(id) => setOpenEventId(id)} />
+        )
       ) : (
         <ChatView
           sessionId={active?.id ?? null}
@@ -92,6 +120,8 @@ export default function App() {
             void refreshSessions();
           }}
           onSessionActivity={() => void refreshSessions()}
+          autoAsk={followupSeed && followupSeed.sessionId === (active?.id ?? null) ? followupSeed.question : undefined}
+          onAutoAskDone={() => setFollowupSeed(null)}
         />
       )}
     </div>

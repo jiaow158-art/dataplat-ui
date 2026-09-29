@@ -11,6 +11,8 @@ interface SidebarProps {
   activeId: string | null;
   isAdmin: boolean; // M4：仅管理员渲染"管理后台"入口
   onAdmin: () => void;
+  insightsEnabled: boolean; // M-i3：驾驶舱 flag 开才渲染"AI经营驾驶舱"入口
+  onInsights: () => void;
   onSelect: (id: string) => void;
   onNew: () => Promise<void>; // 父级建会话并刷新列表后进入空对话态
   onChanged: () => Promise<void>; // 重命名/删除后刷新列表
@@ -164,6 +166,18 @@ export default function Sidebar(props: SidebarProps) {
       </nav>
 
       {error && <div className="mx-3 mb-2 text-xs text-bad">{error}</div>}
+
+      {props.insightsEnabled && (
+        <div className="border-t border-line px-3 py-2">
+          <button
+            type="button"
+            className="w-full rounded border border-line-strong bg-card py-1.5 text-xs text-ink-2 transition-colors hover:border-accent hover:text-ink"
+            onClick={props.onInsights}
+          >
+            AI经营驾驶舱
+          </button>
+        </div>
+      )}
 
       {props.isAdmin && (
         <div className="border-t border-line px-3 py-2">

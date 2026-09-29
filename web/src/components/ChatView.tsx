@@ -24,6 +24,9 @@ interface ChatViewProps {
   onFirstAsk: (uiSessionId: string) => void;
   /** 追问成功后刷侧栏（updated_at 排序）。 */
   onSessionActivity: () => void;
+  /** 驾驶舱 followup 一次性种子：变化且匹配当前会话且空闲时自动发送一次。 */
+  autoAsk?: string;
+  onAutoAskDone?: () => void;
 }
 
 interface SessionView {
@@ -32,7 +35,14 @@ interface SessionView {
   error: string | null;
 }
 
-export default function ChatView({ sessionId, sessionTitle, onFirstAsk, onSessionActivity }: ChatViewProps) {
+export default function ChatView({
+  sessionId,
+  sessionTitle,
+  onFirstAsk,
+  onSessionActivity,
+  autoAsk,
+  onAutoAskDone,
+}: ChatViewProps) {
   const [view, setView] = useState<SessionView | null>(null);
   const [busy, setBusy] = useState(false); // ask 在途：锁输入，防双击重复提交
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -99,6 +109,16 @@ export default function ChatView({ sessionId, sessionTitle, onFirstAsk, onSessio
       setBusy(false);
     }
   };
+
+  // 驾驶舱 followup 种子：autoAsk 变化且匹配当前会话且空闲时经 ask 自动发送一次（ref 防重复）。
+  const autoRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (autoAsk && autoRef.current !== autoAsk && sessionId && !busy) {
+      autoRef.current = autoAsk;
+      void ask(autoAsk);
+      onAutoAskDone?.();
+    }
+  }, [autoAsk, sessionId, busy, ask, onAutoAskDone]);
 
   const retrySubmit = (question: string) => {
     // 整问重发：BFF 每次生成新 submission_id（真重跑，非网络层幂等重试）
