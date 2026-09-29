@@ -74,11 +74,15 @@ export default function App() {
           setView("insights");
           setOpenEventId(null);
         }}
-        onSelect={setActiveId}
+        onSelect={(id) => {
+          setActiveId(id);
+          setView("chat"); // 驾驶舱/管理后台视图下点会话 → 切回对话（此前只改 activeId，主区停在驾驶舱回不去）
+        }}
         onNew={async () => {
           const s = await apiCreateSession();
           await refreshSessions();
           setActiveId(s.id); // 建带默认标题的空会话并选中；不选 = 首问自动建（UI-T6）
+          setView("chat");
         }}
         onChanged={refreshSessions}
         onActiveDeleted={() => setActiveId(null)}
