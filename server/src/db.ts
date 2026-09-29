@@ -544,6 +544,15 @@ export class BffStore {
       .run(username, enabled ? 1 : 0, this.now());
   }
 
+  /** 灰度开关只读列表（insight-flag-cli 的 list 用）；granted_at 新到旧，enabled 出口转布尔。 */
+  listFlags(): Array<{ username: string; enabled: boolean; granted_at: number }> {
+    return (
+      this.db
+        .prepare("SELECT username, enabled, granted_at FROM user_flags ORDER BY granted_at DESC, rowid DESC")
+        .all() as Array<{ username: string; enabled: number; granted_at: number }>
+    ).map((r) => ({ username: r.username, enabled: r.enabled === 1, granted_at: r.granted_at }));
+  }
+
   /** 事件追问审计一行（v1.2.4：落 BFF 记账库，不进 insight.db）；prompt 可空=默认分析。 */
   insertFollowup(id: string, username: string, eventId: string, uiSessionId: string, prompt: string | null): void {
     this.db

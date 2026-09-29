@@ -7,6 +7,7 @@
     "test": "node --test test/*.test.ts",
     "admin:add": "node src/admin-cli.ts",
     "admin:grant": "node src/admin-cli.ts admin:grant",
+    "insight:flag": "node src/insight-flag-cli.ts",
     "migrate": "node src/migrate.ts"
   },
   "dependencies": {
