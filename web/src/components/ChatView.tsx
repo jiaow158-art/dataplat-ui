@@ -110,15 +110,18 @@ export default function ChatView({
     }
   };
 
-  // 驾驶舱 followup 种子：autoAsk 变化且匹配当前会话且空闲时经 ask 自动发送一次（ref 防重复）。
+  // 驾驶舱 followup 种子：autoAsk 变化且匹配当前会话、历史已加载且空闲时经 ask 自动发送一次（ref 防重复）。
+  // 必须等 view.forId===sessionId：autoAsk 首发恰逢会话切换，apiListMessages 的回填会整体替换 turns，
+  // 先行追加的 submitting turn 会被清掉 → 任务在跑但界面空白（2026-09-29 生产实测）。
   const autoRef = useRef<string | null>(null);
   useEffect(() => {
-    if (autoAsk && autoRef.current !== autoAsk && sessionId && !busy) {
+    if (autoAsk && autoRef.current !== autoAsk && sessionId && !busy
+      && view && view.forId === sessionId) {
       autoRef.current = autoAsk;
       void ask(autoAsk);
       onAutoAskDone?.();
     }
-  }, [autoAsk, sessionId, busy, ask, onAutoAskDone]);
+  }, [autoAsk, sessionId, busy, view, ask, onAutoAskDone]);
 
   const retrySubmit = (question: string) => {
     // 整问重发：BFF 每次生成新 submission_id（真重跑，非网络层幂等重试）
