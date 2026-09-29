@@ -1,6 +1,6 @@
 export default function AttributionWaterfall({ waterfall }: { waterfall: Array<{ name: string; value: number }> }) {
   if (waterfall.length < 2) return <div className="p-4 text-sm text-slate-400">瀑布图待归因生成</div>;
-  const max = Math.max(...waterfall.map((w) => Math.abs(w.value)));
+  const max = Math.max(...waterfall.map((w) => Math.abs(w.value))) || 1;
   return (
     <div className="space-y-1.5">
       {waterfall.map((w, i) => {
