@@ -36,6 +36,7 @@ import {
   tasksInRange,
   type GwTaskRow,
 } from "./gw-audit.ts";
+import { insightRouter } from "./insight.ts";
 
 declare module "express-serve-static-core" {
   interface Request {
@@ -62,6 +63,8 @@ export interface BffConfig {
   loginMinFailMs?: number;
   /** 同用户名登录尝试上限（次/分钟，默认 5）。 */
   loginRatePerMin?: number;
+  /** insight-api 地址（M-i3 经营洞察代理；env INSIGHT_URL。未设置时 insight 端点 503 INSIGHT_UNAVAILABLE）。 */
+  insightUrl?: string;
 }
 
 const SESSION_COOKIE = "sid";
@@ -134,6 +137,9 @@ export function createApp(store: BffStore, config: BffConfig): Express {
     req.user = sess.username;
     next();
   });
+
+  // ── M-i3 经营洞察（flag 门禁 + insight-api 代理；见 src/insight.ts）──────────────
+  app.use("/api/insight", insightRouter(store, config.insightUrl));
 
   // ── 账号会话 ──────────────────────────────────────────────────────────────────────
 

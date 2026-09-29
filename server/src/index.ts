@@ -31,6 +31,7 @@ const app = createApp(store, {
   staticDir: process.env.STATIC_DIR ? resolve(process.env.STATIC_DIR) : undefined,
   gwDbPath: process.env.GW_DB_PATH ? resolve(process.env.GW_DB_PATH) : undefined,
   harnessDir: process.env.HARNESS_DIR ? resolve(process.env.HARNESS_DIR) : undefined,
+  insightUrl: process.env.INSIGHT_URL || undefined,
 });
 
 app.listen(port, host, () => {
