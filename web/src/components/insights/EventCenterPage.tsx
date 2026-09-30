@@ -131,31 +131,31 @@ export default function EventCenterPage({
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-slate-100 text-left text-slate-400">
-                  {["#", "事件标题", "严重度", "事件类型", "影响范围", "关键事实", "首次发现", "持续天数", "事件状态", "AI分析状态", "操作"].map((h) => <th key={h} className="px-2.5 py-2.5 font-normal whitespace-nowrap">{h}</th>)}
+                  {["#", "事件标题", "严重度", "事件类型", "影响范围", "关键事实", "首次发现", "持续天数", "事件状态", "AI分析状态", "操作"].map((h) => <th key={h} className="px-2 py-2 font-normal whitespace-nowrap">{h}</th>)}
                 </tr>
               </thead>
               <tbody>
                 {filtered.length === 0 && <tr><td colSpan={11} className="px-2.5 py-10 text-center text-slate-300">{!data ? "…" : data.events.length === 0 ? "暂无经营事件" : "暂无匹配事件"}</td></tr>}
                 {filtered.map((e, i) => (
                   <tr key={e.event_id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/60">
-                    <td className="px-2.5 py-2.5 text-slate-300">{i + 1}</td>
-                    <td className="max-w-64 px-2.5 py-2.5">
+                    <td className="px-2 py-2 text-slate-300">{i + 1}</td>
+                    <td className="max-w-52 px-2 py-2.5">
                       <button type="button" className="flex items-center gap-1 text-left font-semibold text-slate-800 hover:text-blue-600" onClick={() => onOpenEvent(e.event_id)}>
                         <span className="truncate">{e.title}</span>
                         {e.late && <span className="shrink-0 rounded bg-amber-50 px-1 py-0.5 text-[10px] text-amber-600">晚到</span>}
                       </button>
                     </td>
-                    <td className="px-2.5 py-2.5"><span className={`rounded-full px-2 py-0.5 ${severityStyle(e).chip}`}>{e.severity === "major" ? "重大异常" : "一般异常"}</span></td>
-                    <td className="px-2.5 py-2.5 text-slate-600 whitespace-nowrap">{TYPE_LABEL[e.event_type] ?? e.event_type}</td>
-                    <td className="max-w-28 truncate px-2.5 py-2.5 text-slate-600">{e.org ?? "—"}</td>
-                    <td className="max-w-44 truncate px-2.5 py-2.5 text-slate-400">
+                    <td className="px-2 py-2"><span className={`rounded-full px-2 py-0.5 ${severityStyle(e).chip}`}>{e.severity === "major" ? "重大异常" : "一般异常"}</span></td>
+                    <td className="px-2 py-2 text-slate-600 whitespace-nowrap">{TYPE_LABEL[e.event_type] ?? e.event_type}</td>
+                    <td className="max-w-24 truncate px-2 py-2.5 text-slate-600">{e.org ?? "—"}</td>
+                    <td className="max-w-36 truncate px-2 py-2.5 text-slate-400">
                       {e.facts[0] ? <>{e.facts[0].label} <span className="font-medium text-slate-800">{e.facts[0].value}</span></> : "—"}
                     </td>
-                    <td className="px-2.5 py-2.5 text-slate-500 whitespace-nowrap">{e.first_seen_date}</td>
-                    <td className="px-2.5 py-2.5 text-slate-500">{e.persist_days} 天</td>
-                    <td className="px-2.5 py-2.5 whitespace-nowrap"><span className={e.lifecycle === "active" ? "text-blue-600" : "text-emerald-600"}>● {e.lifecycle === "active" ? "进行中" : "已解除"}</span></td>
-                    <td className="px-2.5 py-2.5 whitespace-nowrap"><span className={`rounded-full px-2 py-0.5 ${ATTR_STYLE[e.attribution_status] ?? ATTR_STYLE.pending}`}>{ATTR_LABEL[e.attribution_status] ?? e.attribution_status}</span></td>
-                    <td className="px-2.5 py-2.5 whitespace-nowrap">
+                    <td className="px-2 py-2 text-slate-500 whitespace-nowrap">{e.first_seen_date}</td>
+                    <td className="px-2 py-2 text-slate-500">{e.persist_days} 天</td>
+                    <td className="px-2 py-2 whitespace-nowrap"><span className={e.lifecycle === "active" ? "text-blue-600" : "text-emerald-600"}>● {e.lifecycle === "active" ? "进行中" : "已解除"}</span></td>
+                    <td className="px-2 py-2 whitespace-nowrap"><span className={`rounded-full px-2 py-0.5 ${ATTR_STYLE[e.attribution_status] ?? ATTR_STYLE.pending}`}>{ATTR_LABEL[e.attribution_status] ?? e.attribution_status}</span></td>
+                    <td className="px-2 py-2 whitespace-nowrap">
                       <button type="button" className="rounded bg-blue-600 px-2.5 py-1 text-white hover:bg-blue-700" onClick={() => onOpenEvent(e.event_id)}>查看详情</button>
                       <button type="button" className="ml-2 text-blue-600 hover:underline disabled:pointer-events-none disabled:text-slate-400" disabled={followBusy === e.event_id} onClick={() => void follow(e.event_id)}>
                         {followBusy === e.event_id ? "分析中…" : "继续分析"}
@@ -174,7 +174,7 @@ export default function EventCenterPage({
             </div>
           </div>
         </div>
-        <div className="flex w-full flex-col gap-4 xl:w-[28%] xl:shrink-0">
+        <div className="flex w-full flex-col gap-4 xl:w-80 xl:shrink-0">
           {data && <TrendSummaryCard data={data} />}
           {data && <EventDonutCard title="事件类型分布" items={data.eventTypeDistribution} total={data.events.length} />}
           {data && <EventDonutCard title="事件生命周期分布" items={data.lifecycleDistribution} total={data.events.length} palette={["#2563eb", "#10b981"]} />}
