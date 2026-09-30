@@ -12,7 +12,10 @@ export default function TrendPanel({ eventId }: { eventId: string }) {
     apiInsightTrend(eventId).then((t) => alive && setTrend(t)).catch(() => alive && setFailed(true));
     return () => { alive = false; };
   }, [eventId]);
-  const last = trend?.series.filter((p) => p.cur != null && p.prev != null).at(-1);
+  // 同比角标仅 month_compare 有意义：cumulative_dual 的 cur/prev 是达成率/时间进度（非同比），
+  // month_single 的 prev 恒 null——两者都不算不显示。
+  const last = trend?.kind === "month_compare"
+    ? trend.series.filter((p) => p.cur != null && p.prev != null).at(-1) : undefined;
   const yoy = last && last.prev ? Math.round((last.cur! / last.prev - 1) * 1000) / 10 : null;
   return (
     <div className="rounded-xl bg-white p-6 ring-1 ring-slate-100">

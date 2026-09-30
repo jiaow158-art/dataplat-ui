@@ -245,7 +245,7 @@ export interface InsightDaily {
 export interface InsightEventDetail {
   event: {
     event_id: string; event_key: string; lifecycle: string; data_date: string;
-    first_seen_date: string; persist_days: number; resolved_at: number | null;
+    first_seen_date: string; persist_days: number; resolved_at: string | null;
     detector: string; event_type: string;
     title: string; summary: string; severity: "major" | "minor"; scope_json: string;
     facts_json: string; score: number; status: string;

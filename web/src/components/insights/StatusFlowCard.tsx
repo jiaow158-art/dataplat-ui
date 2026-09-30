@@ -11,8 +11,7 @@ export default function StatusFlowCard({ d }: { d: InsightEventDetail }) {
     { label: attrState, sub: d.attribution.generatedAt
         ? new Date(d.attribution.generatedAt * 1000).toLocaleDateString() : "", on: d.attribution.status !== "pending" },
     { label: `持续 ${d.event.persist_days} 天`, sub: "", on: d.event.lifecycle === "active" },
-    { label: "已解除", sub: d.event.resolved_at
-        ? new Date(d.event.resolved_at * 1000).toLocaleDateString() : "", on: d.event.lifecycle === "resolved" },
+    { label: "已解除", sub: d.event.resolved_at ?? "", on: d.event.lifecycle === "resolved" },
   ];
   return (
     <div className="rounded-xl bg-white p-5 ring-1 ring-slate-100">
