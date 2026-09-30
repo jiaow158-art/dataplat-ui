@@ -245,14 +245,15 @@ export interface InsightDaily {
 export interface InsightEventDetail {
   event: {
     event_id: string; event_key: string; lifecycle: string; data_date: string;
-    first_seen_date: string; persist_days: number; detector: string; event_type: string;
+    first_seen_date: string; persist_days: number; resolved_at: number | null;
+    detector: string; event_type: string;
     title: string; summary: string; severity: "major" | "minor"; scope_json: string;
     facts_json: string; score: number; status: string;
   };
   executiveSummary: string;
   facts: Array<{ label: string; value: string }>;
   attribution: {
-    status: "pending" | "done" | "degraded" | "failed";
+    status: "pending" | "running" | "done" | "degraded" | "failed";
     analysisId: string | null;
     summary: string | null;
     path: Array<{ level: string; contribution: string }>;
@@ -261,6 +262,7 @@ export interface InsightEventDetail {
     entities: Array<{ name: string; type: string; delta: string }>;
     runId: string | null;
     reportPath: string | null;
+    generatedAt: number | null;
   };
   evidence: Array<{ finding_id: string; detector: string; metrics: Record<string, unknown>; norm_score: number; is_late: number }>;
   suggestedActions: string[];

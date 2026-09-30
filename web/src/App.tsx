@@ -105,6 +105,7 @@ export default function App() {
           <EventDetailPage
             eventId={openEventId}
             onBack={() => setOpenEventId(null)}
+            onOpenEvent={(id) => setOpenEventId(id)}
             onFollowed={(r) => {
               setFollowupSeed({ sessionId: r.uiSessionId, question: r.seedQuestion });
               setActiveId(r.uiSessionId);

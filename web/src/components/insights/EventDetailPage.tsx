@@ -8,12 +8,14 @@ import AttributionPath from "./AttributionPath";
 import AttributionWaterfall from "./AttributionWaterfall";
 import TrendPanel from "./TrendPanel";
 import ImpactEntityTable from "./ImpactEntityTable";
+import StatusFlowCard from "./StatusFlowCard";
 import SuggestedActionsPanel from "./SuggestedActionsPanel";
+import RelatedEventsCard from "./RelatedEventsCard";
 import EventFollowupPanel from "./EventFollowupPanel";
 
 export default function EventDetailPage({
-  eventId, onBack, onFollowed,
-}: { eventId: string; onBack: () => void; onFollowed: (r: { uiSessionId: string; seedQuestion: string }) => void }) {
+  eventId, onBack, onFollowed, onOpenEvent,
+}: { eventId: string; onBack: () => void; onFollowed: (r: { uiSessionId: string; seedQuestion: string }) => void; onOpenEvent: (id: string) => void }) {
   const [d, setD] = useState<InsightEventDetail | null>(null);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
@@ -60,13 +62,15 @@ export default function EventDetailPage({
           )}
         </div>
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <TrendPanel />
+          <TrendPanel eventId={eventId} />
           <div className="rounded-xl bg-white p-6 ring-1 ring-slate-100">
             <h3 className="text-sm font-semibold text-slate-900">重点影响对象</h3>
             <div className="mt-3"><ImpactEntityTable entities={d.attribution.entities} /></div>
           </div>
         </div>
+        <StatusFlowCard d={d} />
         <SuggestedActionsPanel actions={d.suggestedActions} />
+        <RelatedEventsCard eventId={eventId} onOpen={onOpenEvent} />
         <EventFollowupPanel eventId={eventId} prompts={d.followupPrompts} onFollowed={onFollowed} />
       </div>
     </div>
