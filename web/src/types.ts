@@ -229,10 +229,13 @@ export interface InsightDailyEvent {
   facts: Array<{ label: string; value: string }>;
   score: number;
   status: string;
+  attributionSummary: string | null;
+  attributionStatus: string;
   createdAt: number;
 }
 export interface InsightDaily {
   briefDate: string;
+  dataDate: string | null;
   scope: string;
   dataFreshness: { overall: "ready" | "partial" | "not_ready"; radars: Array<{ detector: string; ready: boolean; detail: string }> };
   eventCount: number;
