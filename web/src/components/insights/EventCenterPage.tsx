@@ -136,7 +136,7 @@ export default function EventCenterPage({
                 </tr>
               </thead>
               <tbody>
-                {filtered.length === 0 && <tr><td colSpan={11} className="px-3 py-10 text-center text-slate-300">{data ? "暂无匹配事件" : "…"}</td></tr>}
+                {filtered.length === 0 && <tr><td colSpan={11} className="px-3 py-10 text-center text-slate-300">{!data ? "…" : data.events.length === 0 ? "暂无经营事件" : "暂无匹配事件"}</td></tr>}
                 {filtered.map((e, i) => (
                   <tr key={e.event_id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/60">
                     <td className="px-3 py-2.5 text-slate-300">{i + 1}</td>
@@ -174,7 +174,7 @@ export default function EventCenterPage({
         <div className="flex w-full flex-col gap-4 xl:w-96 xl:shrink-0">
           {data && <EventTrendCard points={data.trend.points} />}
           {data && <EventDonutCard title="事件类型分布" items={data.eventTypeDistribution} total={data.events.length} />}
-          {data && <EventDonutCard title="事件生命周期分布" items={data.lifecycleDistribution} total={data.events.length} />}
+          {data && <EventDonutCard title="事件生命周期分布" items={data.lifecycleDistribution} total={data.events.length} palette={["#2563eb", "#10b981"]} />}
         </div>
       </div>
       {err && data && <div className="mx-8 mb-6 text-xs text-red-500">{err}</div>}

@@ -2,7 +2,9 @@
 // 纯 SVG（MiniTrendChart/HealthPanel 同路线）。数据口径全在服务端，这里只画。
 import type { EventCenterDist, EventCenterTrendPoint } from "../../types";
 
-const DONUT_COLORS = ["#2563eb", "#f97316", "#ef4444", "#10b981", "#64748b"];
+// 默认色板=蓝系深浅+中性灰：类型分布是分类不是严重度，不带红/橙/绿语义色；
+// 生命周期环由调用方传 palette（进行中蓝/已解除绿，对齐表格列色，绿=已解除）。
+const DONUT_COLORS = ["#2563eb", "#3b82f6", "#60a5fa", "#93c5fd", "#94a3b8"];
 
 export function EventTrendCard({ points }: { points: EventCenterTrendPoint[] }) {
   const W = 260, H = 130, PAD = 8;
@@ -29,7 +31,8 @@ export function EventTrendCard({ points }: { points: EventCenterTrendPoint[] }) 
   );
 }
 
-export function EventDonutCard({ title, items, total }: { title: string; items: EventCenterDist[]; total: number }) {
+export function EventDonutCard({ title, items, total, palette }: { title: string; items: EventCenterDist[]; total: number; palette?: string[] }) {
+  const colors = palette ?? DONUT_COLORS;
   const sum = items.reduce((s, i) => s + i.count, 0) || 1;
   let acc = 0;
   const R = 40, C = 2 * Math.PI * R;
@@ -42,7 +45,7 @@ export function EventDonutCard({ title, items, total }: { title: string; items: 
             const frac = it.count / sum;
             const el = (
               <circle key={it.key} cx="50" cy="50" r={R} fill="none"
-                stroke={DONUT_COLORS[i % DONUT_COLORS.length]} strokeWidth="14"
+                stroke={colors[i % colors.length]} strokeWidth="14"
                 strokeDasharray={`${C * frac} ${C}`} strokeDashoffset={-C * acc}
                 transform="rotate(-90 50 50)" />
             );
@@ -55,7 +58,7 @@ export function EventDonutCard({ title, items, total }: { title: string; items: 
         <div className="flex min-w-0 flex-1 flex-col gap-1 text-[11px]">
           {items.map((it, i) => (
             <div key={it.key} className="flex items-center gap-1.5">
-              <i className="h-2 w-2 shrink-0 rounded-sm" style={{ background: DONUT_COLORS[i % DONUT_COLORS.length] }} />
+              <i className="h-2 w-2 shrink-0 rounded-sm" style={{ background: colors[i % colors.length] }} />
               <span className="truncate text-slate-600">{it.label}</span>
               <span className="ml-auto shrink-0 text-slate-400">{it.count}（{Math.round(it.count / sum * 100)}%）</span>
             </div>
