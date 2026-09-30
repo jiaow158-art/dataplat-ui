@@ -55,6 +55,18 @@ export function insightRouter(store: BffStore, insightUrl: string | undefined): 
   r.get("/daily", gate, (req, res) => {
     void proxy(res, `/api/insight/daily${req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : ""}`);
   });
+  r.get("/events", gate, (req, res) => {
+    void proxy(res, `/api/insight/events${req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : ""}`);
+  });
+  r.get("/events/:id/trend", gate, (req, res) => {
+    void proxy(res, `/api/insight/events/${encodeURIComponent(req.params.id)}/trend${req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : ""}`);
+  });
+  r.get("/events/:id/related", gate, (req, res) => {
+    void proxy(res, `/api/insight/events/${encodeURIComponent(req.params.id)}/related`);
+  });
+  r.get("/health-score", gate, (_req, res) => {
+    void proxy(res, "/api/insight/health-score");
+  });
   r.get("/events/:id", gate, (req, res) => {
     void proxy(res, `/api/insight/events/${encodeURIComponent(req.params.id)}`);
   });

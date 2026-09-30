@@ -87,3 +87,63 @@ test("enabled/daily/events/timeline 代理与 flag 门禁", async (t) => {
     await insight.close();
   }
 });
+
+test("M-i5 四新端点：未开 flag 403；开 flag 代理透传", async () => {
+  const insight = await startMockGateway((req, res) => {
+    const json = (b: unknown) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(b));
+    };
+    if (req.url === "/api/insight/health-score")
+      return json({ as_of: "2026-09-29", rings: [], target: null });
+    if (req.url === "/api/insight/events?state=active")
+      return json({ briefDate: "2026-09-30", publishMinScore: 55, events: [{ event_id: "ev-1", publishedToday: false, scoreGap: -4.3 }] });
+    if (req.url === "/api/insight/events/ev-1/trend?months=12")
+      return json({ kind: "month_compare", series: [{ month: "2026-08", cur: 1, prev: 2 }] });
+    if (req.url === "/api/insight/events/ev-1/related")
+      return json({ sameType: [], sameRegion: [] });
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "NOT_FOUND" }));
+  });
+  const bff = await startBff({ insightUrl: insight.url });
+  try {
+    bff.store.upsertUser("u1", hashPw("pw"));
+    const li = await login(bff.port, "u1", "pw");
+    const paths = [
+      "/api/insight/health-score",
+      "/api/insight/events?state=active",
+      "/api/insight/events/ev-1/trend?months=12",
+      "/api/insight/events/ev-1/related",
+    ];
+    for (const p of paths) {
+      const r403 = await request(bff.port, "GET", p, { cookie: `sid=${li.sid}` });
+      assert.equal(r403.status, 403);
+      assert.equal(r403.body.error.code, "FLAG_OFF");
+    }
+    bff.store.setFlag("u1", "insight_cockpit", true);
+    const r1 = await request(bff.port, "GET", "/api/insight/health-score", { cookie: `sid=${li.sid}` });
+    assert.equal(r1.status, 200);
+    assert.equal(r1.body.as_of, "2026-09-29");
+    const r2 = await request(bff.port, "GET", "/api/insight/events?state=active", { cookie: `sid=${li.sid}` });
+    assert.equal(r2.status, 200);
+    assert.equal(r2.body.events[0].scoreGap, -4.3);
+    const r3 = await request(bff.port, "GET", "/api/insight/events/ev-1/trend?months=12", { cookie: `sid=${li.sid}` });
+    assert.equal(r3.status, 200);
+    assert.equal(r3.body.kind, "month_compare");
+    const r4 = await request(bff.port, "GET", "/api/insight/events/ev-1/related", { cookie: `sid=${li.sid}` });
+    assert.equal(r4.status, 200);
+    assert.deepEqual(r4.body, { sameType: [], sameRegion: [] });
+    // 上游确实收到了对应路径（query 串逐字透传）
+    for (const up of [
+      "/api/insight/health-score",
+      "/api/insight/events?state=active",
+      "/api/insight/events/ev-1/trend?months=12",
+      "/api/insight/events/ev-1/related",
+    ]) {
+      assert.ok(insight.requests.some((q) => q.url === up), `upstream missing ${up}`);
+    }
+  } finally {
+    await bff.close();
+    await insight.close();
+  }
+});
