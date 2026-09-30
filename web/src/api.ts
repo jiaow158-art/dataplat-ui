@@ -9,6 +9,7 @@ import type {
   AuditUserResult,
   DomainRequestRow,
   DomainRequestStatus,
+  EventCenterPayload,
   FeedbackCategory,
   IncidentRow,
   IncidentStatus,
@@ -182,3 +183,6 @@ export const apiInsightTrend = (eventId: string, months = 12) =>
   api<InsightTrend>("GET", `/api/insight/events/${encodeURIComponent(eventId)}/trend?months=${months}`);
 export const apiInsightRelated = (eventId: string) =>
   api<InsightRelated>("GET", `/api/insight/events/${encodeURIComponent(eventId)}/related`);
+
+// ── M-i6 经营事件中心（state=all 全量统计口径，服务端唯一权威）──────────────────────
+export const apiInsightEventCenter = () => api<EventCenterPayload>("GET", "/api/insight/events?state=all");

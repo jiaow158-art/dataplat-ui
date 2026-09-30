@@ -303,3 +303,28 @@ export interface InsightRelatedEvent {
   data_date: string; created_at: number;
 }
 export interface InsightRelated { sameType: InsightRelatedEvent[]; sameRegion: InsightRelatedEvent[]; }
+
+// ── M-i6 经营事件中心（/api/insight/events?state=all 载荷镜像；统计口径服务端唯一权威 D-e5）──
+export interface EventCenterCard { count: number; prevCount: number; delta: number | null; }
+export interface EventCenterSummary {
+  total: EventCenterCard; major: EventCenterCard; minor: EventCenterCard;
+  targetGap: EventCenterCard; resolved: EventCenterCard;
+}
+export interface EventCenterTrendPoint { date: string; total: number; major: number; minor: number; }
+export interface EventCenterDist { key: string; label: string; count: number; }
+export interface EventCenterEvent {
+  event_id: string; detector: string; event_type: string; title: string; summary: string;
+  severity: "major" | "minor"; org: string | null; channel: string | null;
+  facts: Array<{ label: string; value: string }>; score: number; persist_days: number;
+  first_seen_date: string; last_seen_date: string;
+  lifecycle: "active" | "resolved"; resolved_at: string | null;
+  attribution_status: "pending" | "running" | "done" | "degraded" | "failed";
+  late: boolean; publishedToday: boolean; rankToday: number | null; scoreGap: number;
+}
+export interface EventCenterPayload {
+  asOf: string; summary: EventCenterSummary;
+  trend: { days: number; points: EventCenterTrendPoint[] };
+  eventTypeDistribution: EventCenterDist[];
+  lifecycleDistribution: EventCenterDist[];
+  truncated: boolean; events: EventCenterEvent[];
+}
