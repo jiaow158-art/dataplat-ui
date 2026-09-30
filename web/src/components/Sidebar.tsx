@@ -13,6 +13,7 @@ interface SidebarProps {
   onAdmin: () => void;
   insightsEnabled: boolean; // M-i3：驾驶舱 flag 开才渲染"AI经营驾驶舱"入口
   onInsights: () => void;
+  onEventCenter: () => void; // M-i6：经营事件中心入口（同一 insightsEnabled 门禁）
   onSelect: (id: string) => void;
   onNew: () => Promise<void>; // 父级建会话并刷新列表后进入空对话态
   onChanged: () => Promise<void>; // 重命名/删除后刷新列表
@@ -175,6 +176,13 @@ export default function Sidebar(props: SidebarProps) {
             onClick={props.onInsights}
           >
             AI经营驾驶舱
+          </button>
+          <button
+            type="button"
+            className="mt-1.5 w-full rounded border border-line-strong bg-card py-1.5 text-xs text-ink-2 transition-colors hover:border-accent hover:text-ink"
+            onClick={props.onEventCenter}
+          >
+            经营事件中心
           </button>
         </div>
       )}
