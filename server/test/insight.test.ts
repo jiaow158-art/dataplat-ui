@@ -102,6 +102,10 @@ test("M-i5 四新端点：未开 flag 403；开 flag 代理透传", async () => 
       return json({ kind: "month_compare", series: [{ month: "2026-08", cur: 1, prev: 2 }] });
     if (req.url === "/api/insight/events/ev-1/related")
       return json({ sameType: [], sameRegion: [] });
+    if (req.url === "/api/insight/events?state=all")
+      return json({ asOf: "2026-09-30", summary: {}, trend: { days: 30, points: [] },
+                    eventTypeDistribution: [], lifecycleDistribution: [],
+                    truncated: false, events: [] });
     res.writeHead(404, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "NOT_FOUND" }));
   });
@@ -133,6 +137,10 @@ test("M-i5 四新端点：未开 flag 403；开 flag 代理透传", async () => 
     const r4 = await request(bff.port, "GET", "/api/insight/events/ev-1/related", { cookie: `sid=${li.sid}` });
     assert.equal(r4.status, 200);
     assert.deepEqual(r4.body, { sameType: [], sameRegion: [] });
+    const r5 = await request(bff.port, "GET", "/api/insight/events?state=all", { cookie: `sid=${li.sid}` });
+    assert.equal(r5.status, 200);
+    assert.equal(r5.body.asOf, "2026-09-30");
+    assert.ok(insight.requests.some((q) => q.url === "/api/insight/events?state=all"));
     // 上游确实收到了对应路径（query 串逐字透传）
     for (const up of [
       "/api/insight/health-score",
