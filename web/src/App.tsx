@@ -68,6 +68,7 @@ export default function App() {
         username={boot.username}
         sessions={sessions}
         activeId={activeId}
+        activeView={view}
         isAdmin={boot.isAdmin}
         onAdmin={() => setView("admin")}
         insightsEnabled={insightsOn}

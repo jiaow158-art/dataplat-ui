@@ -2,10 +2,9 @@
 // 前端只做筛选（客户端，v1 量级几十行）与展示。三概念分立（D-e2）：lifecycle/attribution_status
 // 两列各自独立；late 仅标题 Badge。
 import { useEffect, useMemo, useState } from "react";
-import { ApiError, apiInsightEventCenter, apiInsightFollowup, apiInsightTimeline } from "../../api";
-import type { EventCenterPayload, InsightTimelineItem } from "../../types";
-import BusinessEventTimeline from "./BusinessEventTimeline";
-import { EventTrendCard, EventDonutCard } from "./EventCenterCharts";
+import { ApiError, apiInsightEventCenter, apiInsightFollowup } from "../../api";
+import type { EventCenterEvent, EventCenterPayload } from "../../types";
+import { EventDonutCard } from "./EventCenterCharts";
 import { severityStyle } from "./BusinessEventCard";
 
 const TYPE_LABEL: Record<string, string> = { sales_decline: "销售下滑", margin_drop: "毛利下降", ar_overdue: "应收风险", target_gap: "目标缺口" };
@@ -15,10 +14,10 @@ const ATTR_LABEL: Record<string, string> = { pending: "待分析", running: "分
 const ATTR_STYLE: Record<string, string> = { pending: "bg-slate-100 text-slate-500", running: "bg-blue-50 text-blue-600", done: "bg-emerald-50 text-emerald-600", degraded: "bg-amber-50 text-amber-600", failed: "bg-red-50 text-red-500" };
 
 function DeltaTag({ d, positiveIsGood }: { d: number | null; positiveIsGood: boolean }) {
-  if (d === null) return <span className="text-[11px] text-slate-300">—</span>;
+  if (d === null) return <span className="text-[10px] text-slate-300">—</span>;
   const good = positiveIsGood ? d >= 0 : d <= 0;
   return (
-    <span className={`text-[11px] ${good ? "text-emerald-600" : "text-red-500"}`}>
+    <span className={`text-[10px] ${good ? "text-emerald-600" : "text-red-500"}`}>
       {d > 0 ? "↑" : d < 0 ? "↓" : ""}{Math.abs(d)}% 较上期
     </span>
   );
@@ -88,16 +87,16 @@ export default function EventCenterPage({
     <div className="h-full overflow-y-auto bg-slate-50">
       <div className="px-8 pt-8 pb-4 flex items-baseline justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-slate-900">经营事件中心</h1>
+          <h1 className="text-2xl font-semibold text-slate-900">经营事件中心</h1>
           <p className="mt-1 text-sm text-slate-500">查看全部经营事件、状态与进展{data ? ` · 数据日 ${data.asOf}` : ""}</p>
         </div>
       </div>
       <div className="px-8 grid grid-cols-2 md:grid-cols-5 gap-3">
         {cards.map(({ label, card, good }) => (
-          <div key={label} className="rounded-xl bg-white p-4 ring-1 ring-slate-100">
+          <div key={label} className="rounded-xl bg-white p-3 ring-1 ring-slate-100">
             <div className="text-xs text-slate-400">{label}</div>
-            <div className="mt-1 text-2xl font-semibold text-slate-900">{card.count}</div>
-            <div className="mt-1"><DeltaTag d={card.delta} positiveIsGood={good} /></div>
+            <div className="mt-1 text-xl font-semibold text-slate-900">{card.count}</div>
+            <div className="mt-0.5"><DeltaTag d={card.delta} positiveIsGood={good} /></div>
           </div>
         ))}
         {!data && <div className="col-span-5 py-6 text-center text-sm text-slate-400">加载中…</div>}
@@ -132,31 +131,33 @@ export default function EventCenterPage({
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-slate-100 text-left text-slate-400">
-                  {["#", "事件标题", "严重度", "事件类型", "影响范围", "关键事实", "首次发现", "持续天数", "事件状态", "AI分析状态", "操作"].map((h) => <th key={h} className="px-3 py-2.5 font-normal whitespace-nowrap">{h}</th>)}
+                  {["#", "事件标题", "严重度", "事件类型", "影响范围", "关键事实", "首次发现", "持续天数", "事件状态", "AI分析状态", "操作"].map((h) => <th key={h} className="px-2.5 py-2.5 font-normal whitespace-nowrap">{h}</th>)}
                 </tr>
               </thead>
               <tbody>
-                {filtered.length === 0 && <tr><td colSpan={11} className="px-3 py-10 text-center text-slate-300">{!data ? "…" : data.events.length === 0 ? "暂无经营事件" : "暂无匹配事件"}</td></tr>}
+                {filtered.length === 0 && <tr><td colSpan={11} className="px-2.5 py-10 text-center text-slate-300">{!data ? "…" : data.events.length === 0 ? "暂无经营事件" : "暂无匹配事件"}</td></tr>}
                 {filtered.map((e, i) => (
                   <tr key={e.event_id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/60">
-                    <td className="px-3 py-2.5 text-slate-300">{i + 1}</td>
-                    <td className="max-w-56 px-3 py-2.5">
-                      <button type="button" className="flex items-center gap-1 text-left font-medium text-slate-800 hover:text-blue-600" onClick={() => onOpenEvent(e.event_id)}>
+                    <td className="px-2.5 py-2.5 text-slate-300">{i + 1}</td>
+                    <td className="max-w-64 px-2.5 py-2.5">
+                      <button type="button" className="flex items-center gap-1 text-left font-semibold text-slate-800 hover:text-blue-600" onClick={() => onOpenEvent(e.event_id)}>
                         <span className="truncate">{e.title}</span>
                         {e.late && <span className="shrink-0 rounded bg-amber-50 px-1 py-0.5 text-[10px] text-amber-600">晚到</span>}
                       </button>
                     </td>
-                    <td className="px-3 py-2.5"><span className={`rounded-full px-2 py-0.5 ${severityStyle(e).chip}`}>{e.severity === "major" ? "重大异常" : "一般异常"}</span></td>
-                    <td className="px-3 py-2.5 text-slate-600 whitespace-nowrap">{TYPE_LABEL[e.event_type] ?? e.event_type}</td>
-                    <td className="max-w-28 truncate px-3 py-2.5 text-slate-600">{e.org ?? "—"}</td>
-                    <td className="max-w-44 truncate px-3 py-2.5 text-slate-500">{e.facts[0] ? `${e.facts[0].label} ${e.facts[0].value}` : "—"}</td>
-                    <td className="px-3 py-2.5 text-slate-500 whitespace-nowrap">{e.first_seen_date}</td>
-                    <td className="px-3 py-2.5 text-slate-500">{e.persist_days} 天</td>
-                    <td className="px-3 py-2.5 whitespace-nowrap"><span className={e.lifecycle === "active" ? "text-blue-600" : "text-emerald-600"}>● {e.lifecycle === "active" ? "进行中" : "已解除"}</span></td>
-                    <td className="px-3 py-2.5 whitespace-nowrap"><span className={`rounded-full px-2 py-0.5 ${ATTR_STYLE[e.attribution_status] ?? ATTR_STYLE.pending}`}>{ATTR_LABEL[e.attribution_status] ?? e.attribution_status}</span></td>
-                    <td className="px-3 py-2.5 whitespace-nowrap">
-                      <button type="button" className="rounded bg-blue-600 px-2 py-1 text-white hover:bg-blue-700" onClick={() => onOpenEvent(e.event_id)}>详情</button>
-                      <button type="button" className="ml-1 rounded border border-slate-200 px-2 py-1 text-slate-600 hover:border-blue-400 hover:text-blue-600 disabled:opacity-50" disabled={followBusy === e.event_id} onClick={() => void follow(e.event_id)}>
+                    <td className="px-2.5 py-2.5"><span className={`rounded-full px-2 py-0.5 ${severityStyle(e).chip}`}>{e.severity === "major" ? "重大异常" : "一般异常"}</span></td>
+                    <td className="px-2.5 py-2.5 text-slate-600 whitespace-nowrap">{TYPE_LABEL[e.event_type] ?? e.event_type}</td>
+                    <td className="max-w-28 truncate px-2.5 py-2.5 text-slate-600">{e.org ?? "—"}</td>
+                    <td className="max-w-44 truncate px-2.5 py-2.5 text-slate-400">
+                      {e.facts[0] ? <>{e.facts[0].label} <span className="font-medium text-slate-800">{e.facts[0].value}</span></> : "—"}
+                    </td>
+                    <td className="px-2.5 py-2.5 text-slate-500 whitespace-nowrap">{e.first_seen_date}</td>
+                    <td className="px-2.5 py-2.5 text-slate-500">{e.persist_days} 天</td>
+                    <td className="px-2.5 py-2.5 whitespace-nowrap"><span className={e.lifecycle === "active" ? "text-blue-600" : "text-emerald-600"}>● {e.lifecycle === "active" ? "进行中" : "已解除"}</span></td>
+                    <td className="px-2.5 py-2.5 whitespace-nowrap"><span className={`rounded-full px-2 py-0.5 ${ATTR_STYLE[e.attribution_status] ?? ATTR_STYLE.pending}`}>{ATTR_LABEL[e.attribution_status] ?? e.attribution_status}</span></td>
+                    <td className="px-2.5 py-2.5 whitespace-nowrap">
+                      <button type="button" className="rounded bg-blue-600 px-2.5 py-1 text-white hover:bg-blue-700" onClick={() => onOpenEvent(e.event_id)}>查看详情</button>
+                      <button type="button" className="ml-2 text-blue-600 hover:underline disabled:pointer-events-none disabled:text-slate-400" disabled={followBusy === e.event_id} onClick={() => void follow(e.event_id)}>
                         {followBusy === e.event_id ? "分析中…" : "继续分析"}
                       </button>
                     </td>
@@ -168,11 +169,13 @@ export default function EventCenterPage({
           {data?.truncated && <div className="mt-2 text-[11px] text-amber-600">事件超过 500 条已截断显示——请联系管理员调整</div>}
           <div className="mt-4 rounded-xl bg-white p-6 ring-1 ring-slate-100">
             <h3 className="text-sm font-semibold text-slate-900">近期事件动态</h3>
-            <div className="mt-2 max-h-72 overflow-y-auto"><TimelineSection onOpenEvent={onOpenEvent} /></div>
+            <div className="mt-2 max-h-72 overflow-y-auto">
+              {data ? <ActivityTimeline events={data.events} onOpenEvent={onOpenEvent} /> : <div className="p-4 text-sm text-slate-400">加载中…</div>}
+            </div>
           </div>
         </div>
-        <div className="flex w-full flex-col gap-4 xl:w-96 xl:shrink-0">
-          {data && <EventTrendCard points={data.trend.points} />}
+        <div className="flex w-full flex-col gap-4 xl:w-[28%] xl:shrink-0">
+          {data && <TrendSummaryCard data={data} />}
           {data && <EventDonutCard title="事件类型分布" items={data.eventTypeDistribution} total={data.events.length} />}
           {data && <EventDonutCard title="事件生命周期分布" items={data.lifecycleDistribution} total={data.events.length} palette={["#2563eb", "#10b981"]} />}
         </div>
@@ -183,9 +186,85 @@ export default function EventCenterPage({
   );
 }
 
-function TimelineSection({ onOpenEvent }: { onOpenEvent: (id: string) => void }) {
-  const [items, setItems] = useState<InsightTimelineItem[] | null>(null);
-  useEffect(() => { apiInsightTimeline(30).then(setItems).catch(() => setItems([])); }, []);
-  return items === null ? <div className="p-4 text-sm text-slate-400">加载中…</div>
-    : <BusinessEventTimeline items={items} onOpen={onOpenEvent} />;
+/** U4 低样本不画折线：右栏首卡改「近 30 天摘要」文字卡（口径全在服务端，这里只取值展示）。 */
+function TrendSummaryCard({ data }: { data: EventCenterPayload }) {
+  // 集中日=近 30 天新发 total 最大的点（并列取最新日期）；全零 → 无集中日
+  const peak = data.trend.points.reduce<{ date: string; total: number } | null>((best, p) => {
+    if (p.total <= 0) return best;
+    if (!best || p.total > best.total || (p.total === best.total && p.date > best.date)) return { date: p.date, total: p.total };
+    return best;
+  }, null);
+  const d = data.summary.total.delta;
+  return (
+    <div className="rounded-xl bg-white p-4 ring-1 ring-slate-100">
+      <h3 className="text-sm font-semibold text-slate-900">近 30 天摘要</h3>
+      <div className="mt-2 text-xl font-semibold text-slate-900">新增 {data.summary.total.count} 条</div>
+      <div className="mt-1 text-xs text-slate-500">集中日 {peak ? peak.date : "无集中日"}</div>
+      <div className={`mt-1 text-xs ${d == null ? "text-slate-300" : d > 0 ? "text-red-500" : d < 0 ? "text-emerald-600" : "text-slate-400"}`}>
+        较上期 {d == null ? "—" : `${d > 0 ? "+" : ""}${d}%`}
+      </div>
+    </div>
+  );
+}
+
+// U5 动态色点：发现=蓝 / 归因完成·解除=绿 / 降级=橙 / 失败=红
+const ACT_DOT: Record<string, string> = { found: "bg-blue-500", attr_done: "bg-emerald-500", attr_degraded: "bg-orange-500", attr_failed: "bg-red-500", resolved: "bg-emerald-500" };
+const ACT_TXT: Record<string, string> = { found: "text-blue-600", attr_done: "text-emerald-600", attr_degraded: "text-orange-500", attr_failed: "text-red-500", resolved: "text-emerald-600" };
+const ATTR_ACT: Record<string, { kind: string; label: string }> = {
+  done: { kind: "attr_done", label: "归因完成" },
+  degraded: { kind: "attr_degraded", label: "归因降级" },
+  failed: { kind: "attr_failed", label: "归因失败" },
+};
+const pad2 = (n: number) => String(n).padStart(2, "0");
+const fmtActClock = (sec: number) => {
+  const d = new Date(sec * 1000); // insight-api 时间戳为 epoch 秒（同 StatusFlowCard generatedAt*1000）
+  return `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+};
+
+/** U5 真·事件动态：只收录带时间戳的事实——发现(created_at) / 归因(attribution_generated_at，
+ * 仅 done/degraded/failed) / 解除(resolved_at 日期串)；"持续第 N 天"不进时间线（表格列已有）。
+ * 按时间倒序取 12 条；服务端未部署新字段时条目自然缺失，不炸。 */
+function ActivityTimeline({ events, onOpenEvent }: { events: EventCenterEvent[]; onOpenEvent: (id: string) => void }) {
+  const items = useMemo(() => {
+    const out: Array<{ t: number; kind: string; label: string; title: string; eventId: string; timeText: string }> = [];
+    for (const e of events) {
+      if (e.created_at)
+        out.push({ t: e.created_at, kind: "found", label: "首次发现", title: e.title, eventId: e.event_id, timeText: fmtActClock(e.created_at) });
+      const act = e.attribution_generated_at ? ATTR_ACT[e.attribution_status] : undefined;
+      if (e.attribution_generated_at && act)
+        out.push({ t: e.attribution_generated_at, kind: act.kind, label: act.label, title: e.title, eventId: e.event_id, timeText: fmtActClock(e.attribution_generated_at) });
+      if (e.resolved_at)
+        out.push({ t: Date.parse(e.resolved_at) / 1000, kind: "resolved", label: "已解除", title: e.title, eventId: e.event_id, timeText: e.resolved_at.slice(5, 10) });
+    }
+    return out.sort((a, b) => b.t - a.t).slice(0, 12);
+  }, [events]);
+  if (!items.length) return <div className="py-6 text-center text-sm text-slate-300">暂无动态</div>;
+  return (
+    <div className="relative">
+      {/* 中轴竖线：时间列 w-[4.5rem]+gap-3 后即轴心（88px=5.5rem） */}
+      <div className="absolute bottom-2 left-[5.5rem] top-2 w-px bg-slate-100" />
+      <ul className="relative">
+        {items.map((it, i) => (
+          <li key={`${it.eventId}-${it.kind}-${i}`} className="flex items-center gap-3 py-1.5">
+            <span className="w-[4.5rem] shrink-0 text-right font-mono text-[11px] text-slate-400">{it.timeText}</span>
+            <span className="relative z-10 flex h-2 w-2 shrink-0 items-center justify-center rounded-full bg-white ring-1 ring-slate-200">
+              <span className="h-1 w-1 rounded-full bg-slate-300" />
+            </span>
+            <span className="flex min-w-0 items-center gap-1.5">
+              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${ACT_DOT[it.kind] ?? "bg-slate-300"}`} />
+              <span className={`shrink-0 text-[11px] font-medium ${ACT_TXT[it.kind] ?? "text-slate-500"}`}>{it.label}</span>
+              <button
+                type="button"
+                className="min-w-0 truncate text-left text-xs text-slate-600 transition-colors hover:text-blue-600"
+                title={it.title}
+                onClick={() => onOpenEvent(it.eventId)}
+              >
+                {it.title}
+              </button>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }

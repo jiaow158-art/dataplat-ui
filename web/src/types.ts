@@ -320,6 +320,7 @@ export interface EventCenterEvent {
   lifecycle: "active" | "resolved"; resolved_at: string | null;
   attribution_status: "pending" | "running" | "done" | "degraded" | "failed";
   late: boolean; publishedToday: boolean; rankToday: number | null; scoreGap: number;
+  created_at: number; attribution_generated_at: number | null; // U5：epoch 秒（insight-api 口径，同 generatedAt）
 }
 export interface EventCenterPayload {
   asOf: string; summary: EventCenterSummary;

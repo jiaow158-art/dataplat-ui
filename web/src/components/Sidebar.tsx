@@ -9,6 +9,7 @@ interface SidebarProps {
   username: string;
   sessions: UiSession[];
   activeId: string | null;
+  activeView: "chat" | "admin" | "insights" | "events"; // U1：当前主视图——经营导航两项高亮判定（会话高亮仍只看 activeId）
   isAdmin: boolean; // M4：仅管理员渲染"管理后台"入口
   onAdmin: () => void;
   insightsEnabled: boolean; // M-i3：驾驶舱 flag 开才渲染"AI经营驾驶舱"入口
@@ -78,7 +79,17 @@ export default function Sidebar(props: SidebarProps) {
         <span className="text-sm font-semibold text-ink">东鹏问数</span>
       </div>
 
-      <div className="px-3 pt-3">
+      {/* U1 经营导航区（flag 门禁）：主产品入口置顶；AI 问数降为分区 */}
+      {props.insightsEnabled && (
+        <>
+          <div className="px-2 pt-3">
+            <NavItem active={props.activeView === "insights"} label="今日经营关注" onClick={props.onInsights} />
+            <NavItem active={props.activeView === "events"} label="经营事件中心" onClick={props.onEventCenter} />
+          </div>
+          <div className="px-2 pt-3 text-[11px] text-ink-3">AI 问数</div>
+        </>
+      )}
+      <div className={`px-3 ${props.insightsEnabled ? "mt-1.5" : "pt-3"}`}>
         <button
           type="button"
           className="w-full rounded border border-line-strong bg-card py-1.5 text-xs text-ink-2 transition-colors hover:border-accent hover:text-ink"
@@ -168,25 +179,6 @@ export default function Sidebar(props: SidebarProps) {
 
       {error && <div className="mx-3 mb-2 text-xs text-bad">{error}</div>}
 
-      {props.insightsEnabled && (
-        <div className="border-t border-line px-3 py-2">
-          <button
-            type="button"
-            className="w-full rounded border border-line-strong bg-card py-1.5 text-xs text-ink-2 transition-colors hover:border-accent hover:text-ink"
-            onClick={props.onInsights}
-          >
-            AI经营驾驶舱
-          </button>
-          <button
-            type="button"
-            className="mt-1.5 w-full rounded border border-line-strong bg-card py-1.5 text-xs text-ink-2 transition-colors hover:border-accent hover:text-ink"
-            onClick={props.onEventCenter}
-          >
-            经营事件中心
-          </button>
-        </div>
-      )}
-
       {props.isAdmin && (
         <div className="border-t border-line px-3 py-2">
           <button
@@ -224,6 +216,22 @@ export default function Sidebar(props: SidebarProps) {
 
       {domainOpen && <DomainRequestModal onClose={() => setDomainOpen(false)} />}
     </aside>
+  );
+}
+
+/** U1 经营导航项（主产品形态）：4px 左侧色条；高亮 bg-accent-soft，非高亮 hover:bg-lift。 */
+function NavItem({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className={`flex w-full items-center gap-2 rounded px-3 py-2 text-sm transition-colors ${
+        active ? "bg-accent-soft font-medium text-ink" : "text-ink-2 hover:bg-lift"
+      }`}
+      onClick={onClick}
+    >
+      <span className={`h-4 w-1 shrink-0 rounded-full ${active ? "bg-accent" : "bg-line-strong"}`} />
+      {label}
+    </button>
   );
 }
 
