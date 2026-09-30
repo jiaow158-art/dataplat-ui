@@ -269,3 +269,32 @@ export interface InsightTimelineItem {
 export interface InsightFollowupResult {
   uiSessionId: string; seedQuestion: string; title: string;
 }
+export type InsightTrendKind = "month_compare" | "month_single" | "cumulative_dual";
+export interface InsightTrendPoint { month: string; cur: number | null; prev: number | null; }
+export interface InsightTrend {
+  detector: string; anchor_id: string; unit: string; kind: InsightTrendKind;
+  series: InsightTrendPoint[];
+  meta?: { cum_actual_wan?: number; cum_target_wan?: number; as_of?: string };
+}
+export interface InsightHealthRing {
+  key: string; label: string; available?: boolean;
+  score?: number; mom_delta?: number; formula?: string; reason?: string;
+  inputs?: Record<string, unknown>;
+}
+export interface InsightHealthScore {
+  as_of: string;
+  rings: InsightHealthRing[];
+  target: { year: number; achieve_pct: number; actual_wan: number;
+            annual_target_wan: number; time_pct: number } | null;
+}
+export interface InsightActiveEvent {
+  event_id: string; detector: string; event_type: string; title: string;
+  summary: string; severity: "major" | "minor"; score: number; persist_days: number;
+  first_seen_date: string; lifecycle: string; attribution_status: string;
+  publishedToday: boolean; rankToday: number | null; scoreGap: number;
+}
+export interface InsightRelatedEvent {
+  event_id: string; title: string; severity: "major" | "minor";
+  data_date: string; created_at: number;
+}
+export interface InsightRelated { sameType: InsightRelatedEvent[]; sameRegion: InsightRelatedEvent[]; }

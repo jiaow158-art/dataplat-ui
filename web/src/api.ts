@@ -12,10 +12,14 @@ import type {
   FeedbackCategory,
   IncidentRow,
   IncidentStatus,
+  InsightActiveEvent,
   InsightDaily,
   InsightEventDetail,
   InsightFollowupResult,
+  InsightHealthScore,
+  InsightRelated,
   InsightTimelineItem,
+  InsightTrend,
   KnowledgeFileMeta,
   KnowledgePublishResult,
   MeInfo,
@@ -170,3 +174,11 @@ export const apiInsightTimeline = (days = 30) =>
   api<InsightTimelineItem[]>("GET", `/api/insight/timeline?days=${days}`);
 export const apiInsightFollowup = (eventId: string, prompt?: string) =>
   api<InsightFollowupResult>("POST", `/api/insight/events/${encodeURIComponent(eventId)}/followup`, prompt ? { prompt } : {});
+
+// ── M-i5 驾驶舱 v1.1（健康分/活跃事件/迷你趋势/关联事件）──────────────────────────
+export const apiInsightHealthScore = () => api<InsightHealthScore>("GET", "/api/insight/health-score");
+export const apiInsightActiveEvents = () => api<{ briefDate: string; events: InsightActiveEvent[] }>("GET", "/api/insight/events?state=active");
+export const apiInsightTrend = (eventId: string, months = 12) =>
+  api<InsightTrend>("GET", `/api/insight/events/${encodeURIComponent(eventId)}/trend?months=${months}`);
+export const apiInsightRelated = (eventId: string) =>
+  api<InsightRelated>("GET", `/api/insight/events/${encodeURIComponent(eventId)}/related`);
