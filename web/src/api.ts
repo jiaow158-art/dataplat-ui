@@ -186,3 +186,8 @@ export const apiInsightRelated = (eventId: string) =>
 
 // ── M-i6 经营事件中心（state=all 全量统计口径，服务端唯一权威）──────────────────────
 export const apiInsightEventCenter = () => api<EventCenterPayload>("GET", "/api/insight/events?state=all");
+export const apiInsightSubscriptions = () => api<{items: Array<Record<string, unknown>>}>("GET", "/api/insight/subscriptions");
+export const apiInsightAddSubscription = (body: {kind:string; value:string; label?:string}) => api<Record<string, unknown>>("POST", "/api/insight/subscriptions", body);
+export const apiInsightRemoveSubscription = (id:string) => api<{removed:boolean}>("DELETE", `/api/insight/subscriptions/${encodeURIComponent(id)}`);
+export const apiInsightNotifications = () => api<{items: Array<Record<string, unknown>>}>("GET", "/api/insight/notifications");
+export const apiInsightReadAllNotifications = () => api<{updated:number}>("POST", "/api/insight/notifications/read-all", {});

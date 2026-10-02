@@ -9,12 +9,13 @@ interface SidebarProps {
   username: string;
   sessions: UiSession[];
   activeId: string | null;
-  activeView: "chat" | "admin" | "insights" | "events"; // U1：当前主视图——经营导航两项高亮判定（会话高亮仍只看 activeId）
+  activeView: "chat" | "admin" | "insights" | "events" | "subscriptions";
   isAdmin: boolean; // M4：仅管理员渲染"管理后台"入口
   onAdmin: () => void;
   insightsEnabled: boolean; // M-i3：驾驶舱 flag 开才渲染"AI经营驾驶舱"入口
   onInsights: () => void;
   onEventCenter: () => void; // M-i6：经营事件中心入口（同一 insightsEnabled 门禁）
+  onSubscriptions: () => void;
   onSelect: (id: string) => void;
   onNew: () => Promise<void>; // 父级建会话并刷新列表后进入空对话态
   onChanged: () => Promise<void>; // 重命名/删除后刷新列表
@@ -85,6 +86,7 @@ export default function Sidebar(props: SidebarProps) {
           <div className="px-2 pt-3">
             <NavItem active={props.activeView === "insights"} label="今日经营关注" onClick={props.onInsights} />
             <NavItem active={props.activeView === "events"} label="经营事件中心" onClick={props.onEventCenter} />
+            <NavItem active={props.activeView === "subscriptions"} label="我的关注" onClick={props.onSubscriptions} />
           </div>
           <div className="px-2 pt-3 text-[11px] text-ink-3">AI 问数</div>
         </>

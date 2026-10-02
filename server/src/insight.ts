@@ -8,11 +8,12 @@ import type { BffStore } from "./db.ts";
 
 const INSIGHT_TIMEOUT_MS = 5000;
 
-export function insightFetch(base: string, path: string): Promise<{ status: number; body: string }> {
+export function insightFetch(base: string, path: string, method = "GET", body?: unknown, user?: string): Promise<{ status: number; body: string }> {
   const u = new URL(base + path);
   return new Promise((resolve, reject) => {
     const rq = httpRequest(
-      { hostname: u.hostname, port: u.port || 80, path: u.pathname + u.search, method: "GET", timeout: INSIGHT_TIMEOUT_MS },
+      { hostname: u.hostname, port: u.port || 80, path: u.pathname + u.search, method, timeout: INSIGHT_TIMEOUT_MS,
+        headers: { ...(user ? { "X-User": user } : {}), ...(body !== undefined ? { "Content-Type": "application/json" } : {}) } },
       (res) => {
         const chunks: Buffer[] = [];
         res.on("data", (c: Buffer) => chunks.push(c));
@@ -21,7 +22,7 @@ export function insightFetch(base: string, path: string): Promise<{ status: numb
     );
     rq.on("timeout", () => rq.destroy(new Error("insight timeout")));
     rq.on("error", reject);
-    rq.end();
+    rq.end(body === undefined ? undefined : JSON.stringify(body));
   });
 }
 
@@ -36,13 +37,13 @@ export function insightRouter(store: BffStore, insightUrl: string | undefined): 
     next();
   };
 
-  const proxy = async (res: Response, path: string) => {
+  const proxy = async (res: Response, path: string, req?: Request, method = "GET", body?: unknown) => {
     if (!insightUrl) {
       res.status(503).json({ error: { code: "INSIGHT_UNAVAILABLE", message: "INSIGHT_URL unset" } });
       return;
     }
     try {
-      const up = await insightFetch(insightUrl, path);
+      const up = await insightFetch(insightUrl, path, method, body, req?.user);
       res.status(up.status).type("json").send(up.body);
     } catch {
       res.status(503).json({ error: { code: "INSIGHT_UNAVAILABLE", message: "insight api unreachable" } });
@@ -73,6 +74,13 @@ export function insightRouter(store: BffStore, insightUrl: string | undefined): 
   r.get("/timeline", gate, (req, res) => {
     void proxy(res, `/api/insight/timeline${req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : ""}`);
   });
+  r.get("/subscriptions", gate, (req, res) => { void proxy(res, `/api/insight/subscriptions`, req); });
+  r.get("/subscriptions/matches", gate, (req, res) => { void proxy(res, `/api/insight/subscriptions/matches`, req); });
+  r.post("/subscriptions", gate, (req, res) => { void proxy(res, `/api/insight/subscriptions`, req, "POST", req.body); });
+  r.delete("/subscriptions/:id", gate, (req, res) => { void proxy(res, `/api/insight/subscriptions/${encodeURIComponent(req.params.id)}`, req, "DELETE"); });
+  r.get("/notifications", gate, (req, res) => { void proxy(res, `/api/insight/notifications${req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : ""}`, req); });
+  r.post("/notifications/:id/read", gate, (req, res) => { void proxy(res, `/api/insight/notifications/${encodeURIComponent(req.params.id)}/read`, req, "POST", {}); });
+  r.post("/notifications/read-all", gate, (req, res) => { void proxy(res, `/api/insight/notifications/read-all`, req, "POST", {}); });
 
   // followup 种子问题编排（M-i3 Task 3，v1.2.4）：拉事件详情 → 组种子问题（背景+已确认事实+
   // 归因+用户意图）→ 建种子 UI 会话（标题=事件标题截 30 字，复用 createUiSession 的 us-<uuid> 形态）
