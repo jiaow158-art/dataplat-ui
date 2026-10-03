@@ -72,12 +72,12 @@ export default function Sidebar(props: SidebarProps) {
     });
 
   return (
-    <aside className="flex w-64 shrink-0 flex-col border-r border-line bg-panel">
-      <div className="flex items-center gap-2 border-b border-line px-4 py-3">
-        <span className="flex h-7 w-7 items-center justify-center rounded bg-accent-soft text-xs font-bold text-accent-2">
+    <aside className="flex w-64 shrink-0 flex-col border-r border-[#dbe5f1] bg-[#f7faff]">
+      <div className="flex items-center gap-2 border-b border-[#e3ebf4] px-4 py-4">
+        <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#dcecff] text-xs font-bold text-[#1667d9] shadow-sm">
           数
         </span>
-        <span className="text-sm font-semibold text-ink">东鹏问数</span>
+        <span className="text-sm font-semibold tracking-[-0.02em] text-[#10294b]">东鹏问数</span>
       </div>
 
       {/* U1 经营导航区（flag 门禁）：主产品入口置顶；AI 问数降为分区 */}

@@ -24,9 +24,9 @@ export default function BusinessEventCard({
   }, [event.eventId]);
   const insight = event.attributionSummary?.trim() || null;
   return (
-    <div className="relative overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-slate-100">
+    <div className="dashboard-glass group relative overflow-hidden rounded-2xl transition duration-300 hover:-translate-y-1 hover:shadow-[0_18px_42px_rgba(38,65,96,.14)]">
       <div className={`absolute inset-y-0 left-0 w-1 ${st.bar}`} />
-      <div className="p-5 pl-6">
+      <div className="p-5 pl-6 sm:p-6 sm:pl-7">
         <div className="flex items-center gap-2">
           <span className="text-xs text-slate-400">0{rank}</span>
           <span className={`rounded-full px-2 py-0.5 text-xs ${st.chip}`}>{severityLabel(event)}</span>
@@ -34,7 +34,7 @@ export default function BusinessEventCard({
             <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">持续第 {event.persistDays} 天</span>
           )}
         </div>
-        <h3 className="mt-2 text-base font-semibold text-slate-900">{event.title}</h3>
+        <h3 className="mt-2 text-lg font-semibold tracking-[-0.02em] text-[#10294b]">{event.title}</h3>
         <p className="mt-1 line-clamp-2 text-sm text-slate-500">{event.summary}</p>
         <div className="mt-3"><MiniTrendChart trend={trend} /></div>
         <div className="mt-3 flex flex-wrap gap-4">
@@ -46,13 +46,13 @@ export default function BusinessEventCard({
           ))}
         </div>
         {insight && (
-          <div className="mt-3 rounded-lg bg-blue-50/60 p-3">
+          <div className="mt-3 rounded-xl border border-[#dbe9f8] bg-[#f3f8fe] p-3">
             <div className="text-[11px] font-medium text-blue-500">AI 洞察</div>
             <p className="mt-1 line-clamp-3 text-xs text-slate-600">{insight}</p>
           </div>
         )}
         <button
-          className="mt-4 rounded-lg bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700"
+          className="mt-4 rounded-lg bg-[#1667d9] px-3.5 py-2 text-sm font-medium text-white shadow-[0_6px_14px_rgba(22,103,217,.2)] transition hover:-translate-y-0.5 hover:bg-[#0f56ba] focus:outline-none focus:ring-2 focus:ring-[#77aef2] focus:ring-offset-2"
           onClick={() => onOpen(event.eventId)}
         >
           查看详情

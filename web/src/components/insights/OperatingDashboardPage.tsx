@@ -25,10 +25,10 @@ export default function OperatingDashboardPage({ onOpenEvent }: { onOpenEvent: (
     );
   }
   return (
-    <div className="h-full overflow-y-auto bg-slate-50">
+    <div className="dashboard-surface h-full overflow-y-auto">
       <TodayAttentionHeader daily={daily} watching={watching} />
-      <div className="flex flex-col gap-4 px-8 xl:flex-row">
-        <div className="min-w-0 flex-1">
+      <div className="flex flex-col gap-5 px-4 pb-8 sm:px-6 lg:px-8 xl:flex-row">
+        <div className="min-w-0 flex-1 dashboard-enter dashboard-delay-1">
           <BusinessEventList events={daily?.events ?? []} onOpen={onOpenEvent} />
           {daily && daily.dataFreshness.overall !== "ready" && daily.dataFreshness.radars.length > 0 && (
             <div className="mt-4 rounded-xl bg-amber-50 p-4 text-xs text-amber-700 ring-1 ring-amber-100">
@@ -36,9 +36,9 @@ export default function OperatingDashboardPage({ onOpenEvent }: { onOpenEvent: (
             </div>
           )}
         </div>
-        <div className="xl:w-80 xl:shrink-0"><HealthPanel /></div>
+        <div className="dashboard-enter dashboard-delay-2 xl:w-80 xl:shrink-0"><HealthPanel /></div>
       </div>
-      <div className="mt-6 px-8 pb-8">
+      <div className="mt-2 px-4 pb-8 sm:px-6 lg:px-8 dashboard-enter dashboard-delay-3">
         <EventCenterView onOpen={onOpenEvent} />
       </div>
     </div>

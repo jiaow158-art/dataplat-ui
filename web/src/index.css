@@ -27,12 +27,39 @@ body {
 }
 
 body {
-  background: var(--color-base);
+  background: #eef3f8;
   color: var(--color-ink);
   font-family:
     -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei",
     "Helvetica Neue", sans-serif;
   -webkit-font-smoothing: antialiased;
+}
+
+/* Operating dashboard visual system: warm mist, ink blue, restrained glass. */
+.dashboard-surface {
+  background:
+    radial-gradient(circle at 85% -10%, rgba(116, 178, 255, 0.18), transparent 34rem),
+    radial-gradient(circle at 10% 0%, rgba(255, 255, 255, 0.95), transparent 28rem),
+    #eef3f8;
+}
+.dashboard-glass {
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.92);
+  box-shadow: 0 14px 36px rgba(38, 65, 96, 0.08), inset 0 1px rgba(255,255,255,.9);
+  backdrop-filter: blur(14px);
+}
+.dashboard-enter { animation: dashboard-enter 520ms cubic-bezier(.2,.8,.2,1) both; }
+.dashboard-delay-1 { animation-delay: 100ms; }
+.dashboard-delay-2 { animation-delay: 180ms; }
+.dashboard-delay-3 { animation-delay: 260ms; }
+@keyframes dashboard-enter { from { opacity: 0; transform: translateY(10px); filter: blur(3px); } to { opacity: 1; transform: none; filter: none; } }
+@media (prefers-reduced-motion: reduce) { .dashboard-enter { animation: none; } *, *::before, *::after { scroll-behavior: auto !important; } }
+@media (prefers-reduced-motion: reduce) { .dashboard-surface *, .dashboard-surface *::before, .dashboard-surface *::after { transition-duration: 0.01ms !important; transform: none !important; } }
+@media (max-width: 767px) {
+  #root > div > aside { width: 4.5rem; }
+  #root > div > aside nav, #root > div > aside nav + div, #root > div > aside > div:nth-last-child(2) { display: none; }
+  #root > div > aside > div:first-child { justify-content: center; padding-inline: .5rem; }
+  #root > div > aside > div:first-child span:last-child { display: none; }
 }
 
 #root {

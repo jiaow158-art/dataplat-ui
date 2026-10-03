@@ -32,7 +32,7 @@ function RingCell({ r }: { r: InsightHealthRing }) {
   }
   return (
     <div className="relative flex flex-col items-center">
-      <button type="button" className="relative" onClick={() => setOpen(!open)}>
+      <button type="button" aria-label={`${r.label} ${r.score} 分，查看计算依据`} className="relative" onClick={() => setOpen(!open)}>
         <Ring value={r.score} color={ringColor(r.score)} />
         <div className="absolute inset-0 flex items-center justify-center text-sm font-semibold text-slate-800">
           {r.score}
@@ -69,20 +69,20 @@ export default function HealthPanel() {
   }, []);
   if (failed) {
     return (
-      <div className="rounded-xl bg-white p-5 text-sm text-slate-400 ring-1 ring-slate-100">
+      <div className="dashboard-glass rounded-2xl p-5 text-sm text-slate-400">
         经营健康度暂不可用（趋势服务未接入或数据未就绪）
       </div>
     );
   }
   if (!data) {
     return (
-      <div className="rounded-xl bg-white p-5 text-sm text-slate-400 ring-1 ring-slate-100">
+      <div className="dashboard-glass rounded-2xl p-5 text-sm text-slate-400">
         经营健康度加载中…
       </div>
     );
   }
   return (
-    <div className="rounded-xl bg-white p-5 ring-1 ring-slate-100">
+    <div className="dashboard-glass rounded-2xl p-5">
       <div className="flex items-baseline justify-between">
         <h3 className="text-sm font-semibold text-slate-900">经营健康度</h3>
         <span className="text-[11px] text-slate-400">截至 {data.as_of}</span>
