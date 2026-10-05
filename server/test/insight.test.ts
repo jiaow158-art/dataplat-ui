@@ -88,6 +88,40 @@ test("enabled/daily/events/timeline 代理与 flag 门禁", async (t) => {
   }
 });
 
+test("M-i7 target-overview：未开 flag 403；开 flag 代理透传", async () => {
+  const insight = await startMockGateway((req, res) => {
+    if (req.url === "/api/insight/target-overview") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        asOf: "2026-10-01", year: 2026,
+        annual: { achievePct: 82.8, actualWan: 357407.2, targetWan: 431430.1, timePct: 74.5, timeBasis: "年日内自然日占比" },
+        projection: { dailyWan: 1183.5, projectedWan: 432037.0, projectedGapWan: -606.9, basis: "YTD 实绩 ÷ 年内已过自然日 × 全年自然日（线性年化）" },
+        months: [], centers: [], centersTotalBehindWan: null,
+      }));
+      return;
+    }
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "NOT_FOUND" }));
+  });
+  const bff = await startBff({ insightUrl: insight.url });
+  try {
+    bff.store.upsertUser("u1", hashPw("pw"));
+    const li = await login(bff.port, "u1", "pw");
+    const r403 = await request(bff.port, "GET", "/api/insight/target-overview", { cookie: `sid=${li.sid}` });
+    assert.equal(r403.status, 403);
+    assert.equal(r403.body.error.code, "FLAG_OFF");
+    bff.store.setFlag("u1", "insight_cockpit", true);
+    const r = await request(bff.port, "GET", "/api/insight/target-overview", { cookie: `sid=${li.sid}` });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.asOf, "2026-10-01");
+    assert.equal(r.body.annual.achievePct, 82.8);
+    assert.ok(insight.requests.some((q) => q.url === "/api/insight/target-overview")); // 上游逐字收到该路径
+  } finally {
+    await bff.close();
+    await insight.close();
+  }
+});
+
 test("M-i5 四新端点：未开 flag 403；开 flag 代理透传", async () => {
   const insight = await startMockGateway((req, res) => {
     const json = (b: unknown) => {

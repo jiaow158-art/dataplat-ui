@@ -68,6 +68,9 @@ export function insightRouter(store: BffStore, insightUrl: string | undefined): 
   r.get("/health-score", gate, (_req, res) => {
     void proxy(res, "/api/insight/health-score");
   });
+  r.get("/target-overview", gate, (_req, res) => {
+    void proxy(res, "/api/insight/target-overview");
+  });
   r.get("/events/:id", gate, (req, res) => {
     void proxy(res, `/api/insight/events/${encodeURIComponent(req.params.id)}`);
   });
