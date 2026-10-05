@@ -26,6 +26,7 @@ import type {
   MeInfo,
   MessageRow,
   StatsResult,
+  TargetOverview,
   TaskStatus,
   UiSession,
   UrgencyLevel,
@@ -191,3 +192,6 @@ export const apiInsightAddSubscription = (body: {kind:string; value:string; labe
 export const apiInsightRemoveSubscription = (id:string) => api<{removed:boolean}>("DELETE", `/api/insight/subscriptions/${encodeURIComponent(id)}`);
 export const apiInsightNotifications = () => api<{items: Array<Record<string, unknown>>}>("GET", "/api/insight/notifications");
 export const apiInsightReadAllNotifications = () => api<{updated:number}>("POST", "/api/insight/notifications/read-all", {});
+
+// ── M-i7 目标管理（口径服务端唯一权威；annual/months/centers 可局部降级）──────────────
+export const apiInsightTargetOverview = () => api<TargetOverview>("GET", "/api/insight/target-overview");

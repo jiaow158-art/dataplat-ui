@@ -329,3 +329,30 @@ export interface EventCenterPayload {
   lifecycleDistribution: EventCenterDist[];
   truncated: boolean; events: EventCenterEvent[];
 }
+
+// ── M-i7 目标管理（/api/insight/target-overview 载荷镜像；口径服务端唯一权威 spec §3）──
+// annual/months/centers 局部降级形态 {available:false, reason}（判别联合，消费端 narrow）；
+// 金额万元/百分比 number（round 1）；annual 依赖目标数据故 projection 可为 null。
+export interface TargetAnnual {
+  achievePct: number; actualWan: number; targetWan: number;
+  timePct: number; timeBasis: string;
+}
+export interface TargetProjection { dailyWan: number; projectedWan: number; projectedGapWan: number; basis: string; }
+export interface TargetMonthRow {
+  month: string; actualWan: number | null; targetWan: number | null;
+  achievePct: number | null; yoyPct: number | null; isCurrent: boolean; timePct?: number;
+}
+export interface TargetCenterRow {
+  centerCode: string; centerName: string | null; actualWan: number; targetWan: number;
+  achievePct: number | null; timePct: number; behindWan: number;
+  behindSharePct: number; recoveryWan: number;
+}
+export interface TargetDegraded { available: false; reason: string; }
+export interface TargetOverview {
+  asOf: string; year: number;
+  annual: TargetAnnual | TargetDegraded;
+  projection: TargetProjection | null;
+  months: TargetMonthRow[] | TargetDegraded;
+  centers: TargetCenterRow[] | TargetDegraded;
+  centersTotalBehindWan: number | null;
+}
