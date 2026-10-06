@@ -72,7 +72,7 @@ export default function App() {
         username={boot.username}
         sessions={sessions}
         activeId={activeId}
-        activeView={openEventId ? detailSource : view} // 详情打开中：侧栏高亮来源页
+        activeView={view === "insights" && openEventId ? detailSource : view} // 详情打开中（仅 insights 分支渲染）：侧栏高亮来源页
         isAdmin={boot.isAdmin}
         onAdmin={() => setView("admin")}
         insightsEnabled={insightsOn}
