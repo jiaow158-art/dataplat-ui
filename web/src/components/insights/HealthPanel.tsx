@@ -51,8 +51,8 @@ function ringStatus(r: InsightHealthRing): RingStatus {
       };
     }
     default:
-      // 未知环键但可用：防御分支，不给臆测数值
-      return { tone: "success", tag: "正常", value: null };
+      // 未知环键：无阈值可判 → 未接入，不猜（review nit 1）
+      return off(r.reason ?? "未知健康域，无判定阈值");
   }
 }
 
