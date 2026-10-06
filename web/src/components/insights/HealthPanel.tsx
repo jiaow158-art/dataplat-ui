@@ -1,4 +1,4 @@
-// M-i5 经营健康度卡（spec §5/§6，P5 改版）：状态 chip 替代 0-100 分环，点击格子看算式（D-c1"分数谁定的"）。
+// M-i5 经营概览卡（spec §5/§6，P5 改版）：状态 chip 替代 0-100 分环，点击格子看算式（D-c1"分数谁定的"）。
 // 判定只读 available + inputs、不读 score；库存环=永久未接入（诚实红线）——不造数。
 import { useEffect, useState } from "react";
 import { apiInsightHealthScore } from "../../api";
@@ -8,6 +8,7 @@ import Ring from "../cockpit/Ring";
 import SectionCard from "../cockpit/SectionCard";
 import StatusTag from "../cockpit/StatusTag";
 import type { Tone } from "../cockpit/StatusTag";
+import { fmtWanSmart } from "./fmt";
 
 type RingStatus = { tone: Tone; tag: string; value: string | null };
 
@@ -116,20 +117,20 @@ export default function HealthPanel() {
   }, []);
   if (failed) {
     return (
-      <SectionCard title="经营健康度">
+      <SectionCard title="经营概览">
         <DegradedLine reason="趋势服务未接入或数据未就绪" />
       </SectionCard>
     );
   }
   if (!data) {
     return (
-      <SectionCard title="经营健康度">
-        <div className="py-6 text-center text-sm text-ck-ink-3">经营健康度加载中…</div>
+      <SectionCard title="经营概览">
+        <div className="py-6 text-center text-sm text-ck-ink-3">经营概览加载中…</div>
       </SectionCard>
     );
   }
   return (
-    <SectionCard title="经营健康度" extra={`截至 ${data.as_of}`}>
+    <SectionCard title="经营概览" extra={`截至 ${data.as_of}`}>
       <div className="grid grid-cols-2 gap-3">
         {data.rings.map((r) => <StatusCell key={r.key} r={r} />)}
       </div>
@@ -141,8 +142,8 @@ export default function HealthPanel() {
               <div className="text-[11px] font-semibold text-ck-ink">{data.target.achieve_pct}%</div>
             </Ring>
             <div className="text-[11px] leading-relaxed text-ck-ink-3">
-              <div>实际 {data.target.actual_wan.toLocaleString()} 万</div>
-              <div>年度目标 {data.target.annual_target_wan.toLocaleString()} 万</div>
+              <div>实际 {fmtWanSmart(data.target.actual_wan)}</div>
+              <div>年度目标 {fmtWanSmart(data.target.annual_target_wan)}</div>
               <div>时间进度 {data.target.time_pct}%</div>
             </div>
           </div>

@@ -160,6 +160,7 @@ export default function App() {
               setDetailSource("insights");
               setOpenEventId(id);
             }}
+            onOpenEventCenter={() => setView("events")}
           />
         )
       ) : (
