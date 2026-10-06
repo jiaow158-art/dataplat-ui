@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { apiInsightTrend } from "../../api";
 import type { InsightDailyEvent, InsightTrend } from "../../types";
+import PrimaryButton from "../cockpit/PrimaryButton";
+import StatusTag from "../cockpit/StatusTag";
 import MiniTrendChart from "./MiniTrendChart";
 
 export const severityStyle = (e: { severity: string }) =>
@@ -24,12 +26,12 @@ export default function BusinessEventCard({
   }, [event.eventId]);
   const insight = event.attributionSummary?.trim() || null;
   return (
-    <div className="dashboard-glass group relative overflow-hidden rounded-2xl transition duration-300 hover:-translate-y-1 hover:shadow-[0_18px_42px_rgba(38,65,96,.14)]">
+    <div className="group relative overflow-hidden rounded-xl border border-ck-line bg-ck-card shadow-ck transition-colors hover:border-ck-line-strong">
       <div className={`absolute inset-y-0 left-0 w-1 ${st.bar}`} />
       <div className="p-5 pl-6 sm:p-6 sm:pl-7">
         <div className="flex items-center gap-2">
           <span className="text-xs text-slate-400">0{rank}</span>
-          <span className={`rounded-full px-2 py-0.5 text-xs ${st.chip}`}>{severityLabel(event)}</span>
+          <StatusTag tone={event.severity === "major" ? "danger" : "warning"} size="sm">{severityLabel(event)}</StatusTag>
           {event.persistDays > 1 && (
             <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">持续第 {event.persistDays} 天</span>
           )}
@@ -51,12 +53,9 @@ export default function BusinessEventCard({
             <p className="mt-1 line-clamp-3 text-xs text-slate-600">{insight}</p>
           </div>
         )}
-        <button
-          className="mt-4 rounded-lg bg-[#1667d9] px-3.5 py-2 text-sm font-medium text-white shadow-[0_6px_14px_rgba(22,103,217,.2)] transition hover:-translate-y-0.5 hover:bg-[#0f56ba] focus:outline-none focus:ring-2 focus:ring-[#77aef2] focus:ring-offset-2"
-          onClick={() => onOpen(event.eventId)}
-        >
+        <PrimaryButton size="sm" className="mt-4" onClick={() => onOpen(event.eventId)}>
           查看详情
-        </button>
+        </PrimaryButton>
       </div>
     </div>
   );

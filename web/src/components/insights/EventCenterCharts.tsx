@@ -2,6 +2,7 @@
 // 数据口径全在服务端，这里只画。U4（2026-09-30）：30 天三线趋势卡已删——低样本不画折线，
 // 改 EventCenterPage「近 30 天摘要」文字卡。
 import type { EventCenterDist } from "../../types";
+import SectionCard from "../cockpit/SectionCard";
 
 // 默认色板=蓝系深浅+中性灰：类型分布是分类不是严重度，不带红/橙/绿语义色；
 // 生命周期环由调用方传 palette（进行中蓝/已解除绿，对齐表格列色，绿=已解除）。
@@ -13,9 +14,8 @@ export function EventDonutCard({ title, items, total, palette }: { title: string
   let acc = 0;
   const R = 40, C = 2 * Math.PI * R;
   return (
-    <div className="rounded-xl bg-white p-4 ring-1 ring-slate-100">
-      <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
-      <div className="mt-3 flex items-center gap-4">
+    <SectionCard title={title}>
+      <div className="flex items-center gap-4">
         <svg viewBox="0 0 100 100" className="h-28 w-28 shrink-0">
           {items.map((it, i) => {
             const frac = it.count / sum;
@@ -42,6 +42,6 @@ export function EventDonutCard({ title, items, total, palette }: { title: string
           {items.length === 0 && <span className="text-slate-300">暂无事件</span>}
         </div>
       </div>
-    </div>
+    </SectionCard>
   );
 }

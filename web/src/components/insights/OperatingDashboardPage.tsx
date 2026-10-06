@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { apiInsightActiveEvents, apiInsightDaily } from "../../api";
 import type { InsightActiveEvent, InsightDaily } from "../../types";
-import TodayAttentionHeader from "./TodayAttentionHeader";
+import AppShell from "../cockpit/AppShell";
+import PageHeader from "../cockpit/PageHeader";
+import DataFreshness from "../cockpit/DataFreshness";
+import StatusTag from "../cockpit/StatusTag";
 import BusinessEventList from "./BusinessEventList";
 import EventCenterView from "./EventCenterView";
 import HealthPanel from "./HealthPanel";
@@ -15,32 +18,48 @@ export default function OperatingDashboardPage({ onOpenEvent }: { onOpenEvent: (
     apiInsightActiveEvents().then((r) => setActive(r.events)).catch(() => setActive([]));
   }, []);
   const watching = (active?.filter((e) => !e.publishedToday).length) ?? 0;
+  const major = daily?.events.filter((e) => e.severity === "major").length ?? 0;
+  const minor = daily?.events.filter((e) => e.severity === "minor").length ?? 0;
   if (err) {
     return (
-      <div className="p-8 text-sm text-slate-500">
-        经营洞察暂不可用，AI 问数不受影响。
-        <br />
-        <span className="text-xs text-slate-400">{err}</span>
-      </div>
+      <AppShell>
+        <div className="text-sm text-ck-ink-2">
+          经营洞察暂不可用，AI 问数不受影响。
+          <br />
+          <span className="text-xs text-ck-ink-3">{err}</span>
+        </div>
+      </AppShell>
     );
   }
   return (
-    <div className="dashboard-surface h-full overflow-y-auto">
-      <TodayAttentionHeader daily={daily} watching={watching} />
-      <div className="flex flex-col gap-5 px-4 pb-8 sm:px-6 lg:px-8 xl:flex-row">
-        <div className="min-w-0 flex-1 dashboard-enter dashboard-delay-1">
+    <AppShell>
+      <PageHeader
+        title="今日经营关注"
+        subtitle={
+          daily
+            ? daily.dataFreshness.overall === "not_ready"
+              ? "数据未就绪——今日简报未定稿，不代表无异常"
+              : `截至 ${daily.briefDate}，发现 ${daily.eventCount} 件值得关注的经营事项${daily.stale ? "（当前为最近一期已发布简报）" : ""}`
+            : "加载中…"
+        }
+        meta={<DataFreshness asOf={daily?.dataDate} briefDate={daily?.briefDate} />}
+      >
+        <StatusTag tone="danger">重大异常 {major}</StatusTag>
+        <StatusTag tone="warning">一般异常 {minor}</StatusTag>
+        <StatusTag tone="info">观察中 {watching}</StatusTag>
+      </PageHeader>
+      {daily && daily.dataFreshness.overall !== "ready" && daily.dataFreshness.radars.length > 0 && (
+        <DataFreshness
+          notice={`部分雷达数据未就绪：${daily.dataFreshness.radars.filter((r) => !r.ready).map((r) => r.detector).join("、")}`}
+        />
+      )}
+      <div className="flex flex-col gap-5 xl:flex-row">
+        <div className="min-w-0 flex-1">
           <BusinessEventList events={daily?.events ?? []} onOpen={onOpenEvent} />
-          {daily && daily.dataFreshness.overall !== "ready" && daily.dataFreshness.radars.length > 0 && (
-            <div className="mt-4 rounded-xl bg-amber-50 p-4 text-xs text-amber-700 ring-1 ring-amber-100">
-              部分雷达数据未就绪：{daily.dataFreshness.radars.filter((r) => !r.ready).map((r) => r.detector).join("、")}
-            </div>
-          )}
         </div>
-        <div className="dashboard-enter dashboard-delay-2 xl:w-80 xl:shrink-0"><HealthPanel /></div>
+        <div className="xl:w-80 xl:shrink-0"><HealthPanel /></div>
       </div>
-      <div className="mt-2 px-4 pb-8 sm:px-6 lg:px-8 dashboard-enter dashboard-delay-3">
-        <EventCenterView onOpen={onOpenEvent} />
-      </div>
-    </div>
+      <EventCenterView onOpen={onOpenEvent} />
+    </AppShell>
   );
 }
