@@ -13,6 +13,7 @@ import EventDetailPage from "./components/insights/EventDetailPage";
 import EventCenterPage from "./components/insights/EventCenterPage";
 import MySubscriptionsPage from "./components/insights/MySubscriptionsPage";
 import TargetManagementPage from "./components/insights/TargetManagementPage";
+import RegionBattleMapPage from "./components/insights/RegionBattleMapPage";
 
 type Boot = { kind: "loading" } | { kind: "login" } | { kind: "ready"; username: string; isAdmin: boolean };
 
@@ -20,7 +21,7 @@ export default function App() {
   const [boot, setBoot] = useState<Boot>({ kind: "loading" });
   const [sessions, setSessions] = useState<UiSession[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [view, setView] = useState<"chat" | "admin" | "insights" | "events" | "subscriptions" | "targets">("chat");
+  const [view, setView] = useState<"chat" | "admin" | "insights" | "events" | "subscriptions" | "targets" | "regions">("chat");
   const [insightsOn, setInsightsOn] = useState(false);
   const [openEventId, setOpenEventId] = useState<string | null>(null);
   const [followupSeed, setFollowupSeed] = useState<{ sessionId: string; question: string } | null>(null);
@@ -81,6 +82,7 @@ export default function App() {
         onEventCenter={() => setView("events")}
         onSubscriptions={() => setView("subscriptions")}
         onTargets={() => setView("targets")}
+        onRegionMap={() => setView("regions")}
         onSelect={(id) => {
           setActiveId(id);
           setView("chat"); // 驾驶舱/管理后台视图下点会话 → 切回对话（此前只改 activeId，主区停在驾驶舱回不去）
@@ -125,6 +127,13 @@ export default function App() {
         />
       ) : view === "targets" && insightsOn ? (
         <TargetManagementPage />
+      ) : view === "regions" && insightsOn ? (
+        <RegionBattleMapPage
+          onOpenEvent={(id) => {
+            setOpenEventId(id);
+            setView("insights"); // 详情页渲染在 insights 分支：设 id 的同时切视图才真的打开
+          }}
+        />
       ) : view === "insights" && insightsOn ? (
         openEventId ? (
           <EventDetailPage

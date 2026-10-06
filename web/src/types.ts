@@ -356,3 +356,40 @@ export interface TargetOverview {
   centers: TargetCenterRow[] | TargetDegraded;
   centersTotalBehindWan: number | null;
 }
+
+// ── M-i8 区域作战地图（/api/insight/region-map 载荷镜像；口径服务端唯一权威 spec §4）──
+// 五块（national/regions/provinces/regionTrend/regionEvents）可局部降级
+// {available:false,reason}（判别联合，消费端 narrow——同 M-i7 TargetDegraded 先例）；
+// 金额万元 round 1；yoyPct/sharePct/grossMarginPct/achievePct 分母 0 或数据缺 → null。
+export type RegionLevel = "decline" | "watch" | "growth" | "unknown";
+export interface RegionMapNational {
+  ytdWan: number; lyWan: number;
+  yoyPct: number | null; grossMarginPct: number | null; achievePct: number | null;
+}
+export interface RegionMapRegionRow {
+  region: string; // 国内七区 + "未分区"/"海外"（特殊组恒尾行，UI 侧过滤不入地图）
+  ytdWan: number; lyWan: number;
+  yoyPct: number | null; sharePct: number | null; grossMarginPct: number | null;
+  level: RegionLevel; // 服务端判定（D-r1：≤-8 decline / <0 watch / ≥0 growth / null unknown）
+}
+export interface RegionMapProvinceRow {
+  prov: string; // NULL 组行 prov="未分区"；海外行为表外原值
+  region: string; ytdWan: number; lyWan: number; yoyPct: number | null;
+}
+export interface RegionMapTrendPoint { month: string; wan: number; }
+export interface RegionMapTrend { months: string[]; series: Record<string, RegionMapTrendPoint[]>; }
+export interface RegionMapEvent {
+  event_id: string; title: string; severity: "major" | "minor";
+  score: number | null; org: string | null;
+}
+export interface RegionMapDegraded { available: false; reason: string; }
+export interface RegionMapPayload {
+  asOf: string;
+  window: string; // 如 "2026-01-01 ~ 2026-10-05（双年同窗）"
+  national: RegionMapNational | RegionMapDegraded;
+  regions: RegionMapRegionRow[] | RegionMapDegraded;
+  provinces: RegionMapProvinceRow[] | RegionMapDegraded;
+  unmappedProvinces: string[]; // 映射表外国内值（已归未分区，披露不静默吞）
+  regionTrend: RegionMapTrend | RegionMapDegraded;
+  regionEvents: Record<string, RegionMapEvent[]> | RegionMapDegraded; // 键=国内七区
+}

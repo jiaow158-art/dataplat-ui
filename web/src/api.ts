@@ -25,6 +25,7 @@ import type {
   KnowledgePublishResult,
   MeInfo,
   MessageRow,
+  RegionMapPayload,
   StatsResult,
   TargetOverview,
   TaskStatus,
@@ -195,3 +196,6 @@ export const apiInsightReadAllNotifications = () => api<{updated:number}>("POST"
 
 // ── M-i7 目标管理（口径服务端唯一权威；annual/months/centers 可局部降级）──────────────
 export const apiInsightTargetOverview = () => api<TargetOverview>("GET", "/api/insight/target-overview");
+
+// ── M-i8 区域作战地图（五块可局部降级；同窗同比/level 三档/事件关联口径全在服务端）───────
+export const apiInsightRegionMap = () => api<RegionMapPayload>("GET", "/api/insight/region-map");
