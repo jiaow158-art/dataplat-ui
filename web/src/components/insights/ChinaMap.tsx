@@ -47,7 +47,7 @@ const GM_STYLE: Record<Tier, { fill: string; stroke: string }> = {
   high: { fill: "#c7d2fe", stroke: "#818cf8" }, mid: { fill: "#dde4f7", stroke: "#818cf8" }, low: { fill: "#eef2fb", stroke: "#818cf8" },
 };
 
-// 确定性三分位：按值降序，前 ceil(n/3)=高、后 floor(n/3)=低、其余中（n=7 → 3/1/3，取 3/1/3）；
+// 确定性三分位：按值降序，前 ceil(n/3)=高、后 floor(n/3)=低、其余中（n=7 → 高3/中2/低2）；
 // 并列保序（Array.sort 稳定）；值为 null 不参与分位（→ unknown 灰）
 function tercile(rows: MapRegionRow[], val: (r: MapRegionRow) => number | null): Map<string, Tier> {
   const sorted = rows.filter((r) => val(r) != null).sort((a, b) => (val(b) as number) - (val(a) as number));
