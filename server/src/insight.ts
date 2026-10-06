@@ -71,6 +71,9 @@ export function insightRouter(store: BffStore, insightUrl: string | undefined): 
   r.get("/target-overview", gate, (_req, res) => {
     void proxy(res, "/api/insight/target-overview");
   });
+  r.get("/region-map", gate, (_req, res) => {
+    void proxy(res, "/api/insight/region-map");
+  });
   r.get("/events/:id", gate, (req, res) => {
     void proxy(res, `/api/insight/events/${encodeURIComponent(req.params.id)}`);
   });

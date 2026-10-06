@@ -122,6 +122,40 @@ test("M-i7 target-overview：未开 flag 403；开 flag 代理透传", async () 
   }
 });
 
+test("M-i8 region-map：未开 flag 403；开 flag 代理透传", async () => {
+  const insight = await startMockGateway((req, res) => {
+    if (req.url === "/api/insight/region-map") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        asOf: "2026-10-05", window: "2026-01-01 ~ 2026-10-05（双年同窗）",
+        national: { ytdWan: 363201.2, lyWan: 326941.0, yoyPct: 11.1, grossMarginPct: 24.3, achievePct: 75.9 },
+        regions: [], provinces: [], unmappedProvinces: [],
+        regionTrend: { months: [], series: {} }, regionEvents: {},
+      }));
+      return;
+    }
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "NOT_FOUND" }));
+  });
+  const bff = await startBff({ insightUrl: insight.url });
+  try {
+    bff.store.upsertUser("u1", hashPw("pw"));
+    const li = await login(bff.port, "u1", "pw");
+    const r403 = await request(bff.port, "GET", "/api/insight/region-map", { cookie: `sid=${li.sid}` });
+    assert.equal(r403.status, 403);
+    assert.equal(r403.body.error.code, "FLAG_OFF");
+    bff.store.setFlag("u1", "insight_cockpit", true);
+    const r = await request(bff.port, "GET", "/api/insight/region-map", { cookie: `sid=${li.sid}` });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.asOf, "2026-10-05");
+    assert.equal(r.body.national.ytdWan, 363201.2);
+    assert.ok(insight.requests.some((q) => q.url === "/api/insight/region-map")); // 上游逐字收到该路径
+  } finally {
+    await bff.close();
+    await insight.close();
+  }
+});
+
 test("M-i5 四新端点：未开 flag 403；开 flag 代理透传", async () => {
   const insight = await startMockGateway((req, res) => {
     const json = (b: unknown) => {
