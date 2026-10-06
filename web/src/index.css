@@ -18,6 +18,26 @@
   --color-good: #34d399;
   --color-warn: #fbbf24;
   --color-bad: #f87171;
+
+  /* ── P2 驾驶舱亮色系（cockpit）；上方暗色 token 仅 chat/admin 使用 ── */
+  --color-ck-bg: #f5f8fc;
+  --color-ck-card: #ffffff;
+  --color-ck-card-soft: #f7fafd;
+  --color-ck-line: #dbe4ef;
+  --color-ck-line-strong: #c2d0e2;
+  --color-ck-ink: #14294b;
+  --color-ck-ink-2: #3f4f66;
+  --color-ck-ink-3: #7c8ba1;
+  --color-ck-primary: #1667d9;
+  --color-ck-primary-hover: #0f56ba;
+  --color-ck-primary-soft: #eaf2fb;
+  --color-ck-success: #0e9f6e;
+  --color-ck-success-soft: #e7f7f1;
+  --color-ck-warning: #b87316;
+  --color-ck-warning-soft: #fdf3e4;
+  --color-ck-danger: #d64b4b;
+  --color-ck-danger-soft: #fdeeec;
+  --shadow-ck: 0 1px 2px rgb(20 41 75 / 0.05);
 }
 
 html,
@@ -81,6 +101,16 @@ body {
 }
 *::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/* 驾驶舱亮色滚动条（.ck-scroll 作用域覆盖上方全局深色细滚动条） */
+.ck-scroll,
+.ck-scroll * {
+  scrollbar-color: var(--color-ck-line-strong) transparent;
+}
+.ck-scroll ::-webkit-scrollbar-thumb {
+  background: var(--color-ck-line-strong);
+  border-radius: 4px;
 }
 
 /* 回答正文 markdown 排版（经 rehype-sanitize 白名单后的受控标签集） */
