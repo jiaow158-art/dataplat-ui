@@ -59,7 +59,7 @@ export default function BusinessEventCard({
           ))}
         </div>
         {event.attributionStatus === "done" && summary ? (
-          <div className="mt-3 rounded-lg border border-ck-primary-soft bg-ck-primary-soft p-2.5">
+          <div className="mt-3 rounded-lg bg-ck-primary-soft p-2.5">
             <div className="text-[11px] font-medium text-ck-primary">AI 洞察</div>
             <p className="mt-0.5 line-clamp-3 text-xs text-ck-ink-2">{summary}</p>
           </div>

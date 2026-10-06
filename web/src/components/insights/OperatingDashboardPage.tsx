@@ -43,13 +43,14 @@ export default function OperatingDashboardPage({
           <div className="mt-1 text-sm text-ck-ink-3">
             截至 {daily?.briefDate ?? "…"}{daily?.stale ? "（当前为最近一期已发布简报）" : ""}
           </div>
-          {daily && (daily.dataFreshness.overall === "not_ready" ? (
-            <div className="mt-3 text-base font-medium text-ck-warning">部分经营数据尚未就绪</div>
-          ) : daily.eventCount > 0 ? (
-            <div className="mt-3 text-lg text-ck-ink-2">
+          {daily?.dataFreshness.overall === "not_ready" && (
+            <div className="mt-2 text-base font-medium text-ck-warning">数据未就绪——今日简报未定稿，不代表无异常</div>
+          )}
+          {daily && daily.eventCount > 0 && (
+            <div className="mt-2 text-lg text-ck-ink-2">
               有 <span className="text-3xl font-semibold text-ck-primary">{daily.eventCount}</span> 件经营事项值得你关注
             </div>
-          ) : null /* 零事件态由列表区承担，hero 不重复大字 */)}
+          ) /* 零事件态由列表区承担，hero 不重复大字；not_ready 警行与 N 行共存（review finding 1） */}
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <StatusTag tone="danger">重大异常 {major}</StatusTag>
             <StatusTag tone="warning">一般异常 {minor}</StatusTag>
