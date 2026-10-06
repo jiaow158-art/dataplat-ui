@@ -47,6 +47,15 @@ export default function App() {
     setSessions(await apiListSessions());
   }, []);
 
+  // P1-2 区域页「让AI分析」：预建会话→种 followup 问题→切对话（同 followup 编排；ChatView autoAsk 需已存在会话）
+  const askSeed = useCallback(async (question: string) => {
+    const s = await apiCreateSession();
+    await refreshSessions();
+    setActiveId(s.id);
+    setFollowupSeed({ sessionId: s.id, question });
+    setView("chat");
+  }, [refreshSessions]);
+
   if (boot.kind === "loading") {
     return (
       <div className="flex h-full items-center justify-center bg-base text-sm text-ink-3">加载中…</div>
@@ -137,6 +146,8 @@ export default function App() {
             setOpenEventId(id);
             setView("insights"); // 详情页渲染在 insights 分支：设 id 的同时切视图才真的打开
           }}
+          onOpenEventCenter={() => setView("events")}
+          onAsk={(q) => void askSeed(q)}
         />
       ) : view === "insights" && insightsOn ? (
         openEventId ? (
