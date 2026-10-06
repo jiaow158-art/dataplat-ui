@@ -16,14 +16,16 @@ const fmt1 = (n: number) => n.toFixed(1);
 // 降级 reason 消毒：异常 repr（OperationalError('…）不进正文，转友好文案；原文只留 title 提示
 const friendlyReason = (reason: string | null): string | null =>
   reason && /Error|Traceback|Exception|\('/i.test(reason) ? "数据暂不可用" : reason;
-const off = (reason: string | null): RingStatus => ({ tone: "neutral", tag: "未接入", value: friendlyReason(reason) });
+const off = (reason: string | null, isError = false): RingStatus => ({
+  tone: "neutral", tag: "未接入", value: isError ? "数据暂不可用" : friendlyReason(reason),
+});
 // 域名简称：销售健康度→销售
 const domainLabel = (label: string) => label.replace(/健康度$/, "");
 
 // P5 状态映射：组件内局部函数（展示层专用，禁止导出/回流业务判定）。
 // 阈值=旧 60/80 色带的等价原始阈值；所需原始输入缺失→未接入，不猜。
 function ringStatus(r: InsightHealthRing): RingStatus {
-  if (!r.available) return off(r.reason ?? null);
+  if (!r.available) return off(r.reason ?? null, r.error === true);
   const inputs = r.inputs ?? {};
   switch (r.key) {
     case "sales": {

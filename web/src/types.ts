@@ -283,6 +283,7 @@ export interface InsightTrend {
 }
 export interface InsightHealthRing {
   key: string; label: string; available?: boolean;
+  error?: boolean; // 异常致降级标记（区别于数据缺失）：UI 据此显示 数据暂不可用
   score?: number; mom_delta?: number; formula?: string; reason?: string;
   inputs?: Record<string, unknown>;
 }
