@@ -299,7 +299,7 @@ export interface InsightActiveEvent {
   publishedToday: boolean; rankToday: number | null; scoreGap: number;
 }
 export interface InsightRelatedEvent {
-  event_id: string; title: string; severity: "major" | "minor";
+  event_id: string; title: string; severity: string;
   data_date: string; created_at: number;
 }
 export interface InsightRelated { sameType: InsightRelatedEvent[]; sameRegion: InsightRelatedEvent[]; }
@@ -379,7 +379,7 @@ export interface RegionMapProvinceRow {
 export interface RegionMapTrendPoint { month: string; wan: number; }
 export interface RegionMapTrend { months: string[]; series: Record<string, RegionMapTrendPoint[]>; }
 export interface RegionMapEvent {
-  event_id: string; title: string; severity: "major" | "minor";
+  event_id: string; title: string; severity: string;
   score: number | null; org: string | null;
 }
 export interface RegionMapDegraded { available: false; reason: string; }

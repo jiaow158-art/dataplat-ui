@@ -95,16 +95,14 @@ function RankCard({ block, tab, setTab, selected, onSelect }: {
               <td className={`px-1.5 py-1.5 font-medium ${pctCls(r.yoyPct)}`}>{fmtPct(r.yoyPct)}</td>
             </tr>
           ))}
-          {special.map((r) => (
-            <tr key={r.region} className="border-b border-slate-50 last:border-0 text-slate-400">
-              <td className="px-1.5 py-1.5">—</td>
-              <td className="px-1.5 py-1.5">{r.region}</td>
-              <td className="px-1.5 py-1.5">{(r.ytdWan / 10000).toFixed(1)}</td>
-              <td className="px-1.5 py-1.5">{fmtPct(r.yoyPct)}</td>
-            </tr>
-          ))}
         </tbody>
       </table>
+      {special.length > 0 && (
+        <p className="mt-1.5 px-1.5 text-[10px] text-slate-400">
+          {special.map((r) => `${r.region} ${(r.ytdWan / 10000).toFixed(1)} 亿`).join(" · ")}
+          （计入全国，不入排名——D-r3）
+        </p>
+      )}
     </Panel>
   );
 }
@@ -284,10 +282,13 @@ export default function RegionBattleMapPage({ onOpenEvent }: { onOpenEvent: (id:
   }, []);
 
   const nat = data && !isDegraded(data.national) ? data.national : null;
-  const domestic = data && !isDegraded(data.regions)
-    ? data.regions.filter((r) => !SPECIAL_REGIONS.includes(r.region))
+  const regionsDegraded = !data || isDegraded(data.regions);
+  const domestic = !regionsDegraded
+    ? (data!.regions as RegionMapRegionRow[]).filter((r) => !SPECIAL_REGIONS.includes(r.region))
     : [];
-  const focusCount = domestic.filter((r) => r.level === "decline" || r.level === "watch").length;
+  // regions 降级时显"—"不显 0（空数组计数会伪装"无风险区"）
+  const focusCount = regionsDegraded ? null
+    : domestic.filter((r) => r.level === "decline" || r.level === "watch").length;
 
   // 再点同一区=回到全国（排名行/地图省份/气泡共用；作战卡"查看"是定向选中不切换）
   const toggleSelect = (r: string) => setSelectedRegion((cur) => (cur === r ? null : r));
@@ -324,8 +325,10 @@ export default function RegionBattleMapPage({ onOpenEvent }: { onOpenEvent: (id:
               sub="窗内毛利 ÷ 净销售" />
             <StatCard label="全国达成率" value={nat && nat.achievePct != null ? `${nat.achievePct}%` : "—"}
               sub="目标口径" />
-            <StatCard label="重点关注区域数" value={String(focusCount)}
-              valueCls={focusCount > 0 ? "text-red-500" : undefined} sub="同比下滑或需关注" />
+            <StatCard label="重点关注区域数"
+              value={focusCount === null ? "—" : String(focusCount)}
+              valueCls={focusCount != null && focusCount > 0 ? "text-red-500" : undefined}
+              sub={focusCount === null ? "区域数据未就绪" : "同比下滑或需关注"} />
           </div>
           {isDegraded(data.national) && (
             <div className="px-8 pt-2 text-[11px] text-amber-600">全国概览降级：{data.national.reason}</div>
