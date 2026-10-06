@@ -1,6 +1,7 @@
 // UI-T5 左栏：会话列表（新建/切换/重命名 inline 编辑/删除）+ 当前用户 + 登出。
 // 会话 CRUD 全部走 BFF /api/sessions（记账表；删除不动网关，spec §8）。
 // 知识健康治理 §四C：底部「申请新域」→ 弹层表单 → POST /api/domain-requests。
+// P0 双壳：flag 关 = legacy（渲染字节级原样）；flag 开 = cockpit 三组导航壳，chat 视图回落会话壳（顶部返回驾驶舱）。
 import { useState, type KeyboardEvent } from "react";
 import { ApiError, apiDeleteSession, apiRenameSession, apiSubmitDomainRequest } from "../api";
 import type { UiSession, UrgencyLevel } from "../types";
@@ -18,6 +19,7 @@ interface SidebarProps {
   onSubscriptions: () => void;
   onTargets: () => void; // M-i7：目标管理入口（同一 insightsEnabled 门禁）
   onRegionMap: () => void; // M-i8：区域作战地图入口（同一 insightsEnabled 门禁）
+  onChat: () => void; // P1 双壳——进入 AI问数 模式
   onSelect: (id: string) => void;
   onNew: () => Promise<void>; // 父级建会话并刷新列表后进入空对话态
   onChanged: () => Promise<void>; // 重命名/删除后刷新列表
@@ -33,6 +35,9 @@ export default function Sidebar(props: SidebarProps) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [domainOpen, setDomainOpen] = useState(false);
+
+  // P0 双壳：flag 关 = legacy；flag 开 = cockpit 壳，chat 视图 = 会话壳
+  const mode = !props.insightsEnabled ? "legacy" : props.activeView === "chat" ? "chat" : "cockpit";
 
   const guard = async (fn: () => Promise<void>) => {
     if (busy) return;
@@ -82,130 +87,154 @@ export default function Sidebar(props: SidebarProps) {
         <span className="text-sm font-semibold tracking-[-0.02em] text-[#10294b]">东鹏问数</span>
       </div>
 
-      {/* U1 经营导航区（flag 门禁）：主产品入口置顶；AI 问数降为分区 */}
-      {props.insightsEnabled && (
+      {mode === "cockpit" ? (
         <>
-          <div className="px-2 pt-3">
-            <NavItem active={props.activeView === "insights"} label="今日经营关注" onClick={props.onInsights} />
-            <NavItem active={props.activeView === "events"} label="经营事件中心" onClick={props.onEventCenter} />
-            <NavItem active={props.activeView === "targets"} label="目标管理" onClick={props.onTargets} />
-            <NavItem active={props.activeView === "regions"} label="区域作战地图" onClick={props.onRegionMap} />
-            <NavItem active={props.activeView === "subscriptions"} label="我的关注" onClick={props.onSubscriptions} />
+          {/* P0 驾驶舱壳：三组导航 + flex-1 占位。移动端约束（index.css <768px 隐藏 aside 内
+              nav / nav+div / div:nth-last-child(2)，媒体查询块字节不动）：本分支不得渲染 <nav> 元素，
+              且 aside 子序必须以 [flex-1 空占位 div, 用户 footer] 收尾——占位 div 吃掉 nth-last-child(2) 隐藏规则。 */}
+          <div className="px-2 pt-3 text-[11px] text-ck-ink-3">经营模块</div>
+          <div className="px-2">
+            <NavItemCk active={props.activeView === "insights"} label="今日经营关注" onClick={props.onInsights} />
+            <NavItemCk active={props.activeView === "events"} label="经营事件中心" onClick={props.onEventCenter} />
+            <NavItemCk active={props.activeView === "targets"} label="目标管理" onClick={props.onTargets} />
+            <NavItemCk active={props.activeView === "regions"} label="区域作战地图" onClick={props.onRegionMap} />
+            <NavItemCk active={props.activeView === "subscriptions"} label="我的关注" onClick={props.onSubscriptions} />
           </div>
-          <div className="px-2 pt-3 text-[11px] text-ink-3">AI 问数</div>
+          <div className="px-2 pt-3 text-[11px] text-ck-ink-3">AI问数</div>
+          <div className="px-2">
+            <NavItemCk active={false} label="AI问数" onClick={props.onChat} />
+          </div>
+          {props.isAdmin && (
+            <>
+              <div className="px-2 pt-3 text-[11px] text-ck-ink-3">管理设置</div>
+              <div className="px-2">
+                <NavItemCk active={props.activeView === "admin"} label="系统设置" onClick={props.onAdmin} />
+              </div>
+            </>
+          )}
+          <div className="flex-1" />
+        </>
+      ) : (
+        <>
+          {mode === "chat" && (
+            // P1 双壳：AI问数 模式顶部返回驾驶舱（替换原 U1 经营导航块）
+            <div className="px-2 pt-3">
+              <NavItemCk active={false} label="← 返回驾驶舱" onClick={props.onInsights} />
+            </div>
+          )}
+          <div className={`px-3 ${props.insightsEnabled ? "mt-1.5" : "pt-3"}`}>
+            <button
+              type="button"
+              className="w-full rounded border border-line-strong bg-card py-1.5 text-xs text-ink-2 transition-colors hover:border-accent hover:text-ink"
+              disabled={busy}
+              onClick={() => guard(props.onNew)}
+            >
+              ＋ 新建会话
+            </button>
+          </div>
+
+          <nav className="mt-2 flex-1 overflow-y-auto px-2 pb-2">
+            {sessions.length === 0 && (
+              <div className="px-2 py-6 text-center text-xs text-ink-3">暂无会话，新建一个开始提问</div>
+            )}
+            {sessions.map((s) => {
+              const active = s.id === activeId;
+              return (
+                <div
+                  key={s.id}
+                  className={`group mb-0.5 flex items-center gap-1 rounded px-2 py-1.5 ${
+                    active ? "bg-accent-soft" : "hover:bg-lift"
+                  }`}
+                >
+                  {editingId === s.id ? (
+                    <input
+                      autoFocus
+                      className="min-w-0 flex-1 rounded border border-accent bg-card px-1.5 py-0.5 text-xs text-ink outline-none"
+                      value={editTitle}
+                      onChange={(e) => setEditTitle(e.target.value)}
+                      onBlur={() => commitRename(s.id)}
+                      onKeyDown={(e) => onEditKey(e, s.id)}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 truncate text-left text-xs text-ink"
+                      title={s.title}
+                      onClick={() => props.onSelect(s.id)}
+                      onDoubleClick={() => startRename(s)}
+                    >
+                      {s.title}
+                    </button>
+                  )}
+                  {editingId !== s.id &&
+                    (confirmDeleteId === s.id ? (
+                      <span className="flex shrink-0 items-center gap-1 text-[10px]">
+                        <button
+                          type="button"
+                          className="rounded bg-bad/20 px-1.5 py-0.5 text-bad hover:bg-bad/30"
+                          disabled={busy}
+                          onClick={() => remove(s)}
+                        >
+                          删除
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded px-1.5 py-0.5 text-ink-3 hover:text-ink"
+                          onClick={() => setConfirmDeleteId(null)}
+                        >
+                          取消
+                        </button>
+                      </span>
+                    ) : (
+                      <span className="hidden shrink-0 gap-0.5 group-hover:flex">
+                        <button
+                          type="button"
+                          title="重命名"
+                          className="rounded p-0.5 text-ink-3 hover:text-ink"
+                          onClick={() => startRename(s)}
+                        >
+                          <IconPencil />
+                        </button>
+                        <button
+                          type="button"
+                          title="删除会话"
+                          className="rounded p-0.5 text-ink-3 hover:text-bad"
+                          onClick={() => setConfirmDeleteId(s.id)}
+                        >
+                          <IconTrash />
+                        </button>
+                      </span>
+                    ))}
+                </div>
+              );
+            })}
+          </nav>
+
+          {error && <div className="mx-3 mb-2 text-xs text-bad">{error}</div>}
+
+          {props.isAdmin && (
+            <div className="border-t border-line px-3 py-2">
+              <button
+                type="button"
+                className="w-full rounded border border-line-strong bg-card py-1.5 text-xs text-ink-2 transition-colors hover:border-accent hover:text-ink"
+                onClick={props.onAdmin}
+              >
+                管理后台
+              </button>
+            </div>
+          )}
+
+          <div className="border-t border-line px-3 py-2">
+            <button
+              type="button"
+              className="w-full rounded py-1 text-[11px] text-ink-3 transition-colors hover:text-accent-2"
+              onClick={() => setDomainOpen(true)}
+            >
+              ＋ 申请新域
+            </button>
+          </div>
         </>
       )}
-      <div className={`px-3 ${props.insightsEnabled ? "mt-1.5" : "pt-3"}`}>
-        <button
-          type="button"
-          className="w-full rounded border border-line-strong bg-card py-1.5 text-xs text-ink-2 transition-colors hover:border-accent hover:text-ink"
-          disabled={busy}
-          onClick={() => guard(props.onNew)}
-        >
-          ＋ 新建会话
-        </button>
-      </div>
-
-      <nav className="mt-2 flex-1 overflow-y-auto px-2 pb-2">
-        {sessions.length === 0 && (
-          <div className="px-2 py-6 text-center text-xs text-ink-3">暂无会话，新建一个开始提问</div>
-        )}
-        {sessions.map((s) => {
-          const active = s.id === activeId;
-          return (
-            <div
-              key={s.id}
-              className={`group mb-0.5 flex items-center gap-1 rounded px-2 py-1.5 ${
-                active ? "bg-accent-soft" : "hover:bg-lift"
-              }`}
-            >
-              {editingId === s.id ? (
-                <input
-                  autoFocus
-                  className="min-w-0 flex-1 rounded border border-accent bg-card px-1.5 py-0.5 text-xs text-ink outline-none"
-                  value={editTitle}
-                  onChange={(e) => setEditTitle(e.target.value)}
-                  onBlur={() => commitRename(s.id)}
-                  onKeyDown={(e) => onEditKey(e, s.id)}
-                />
-              ) : (
-                <button
-                  type="button"
-                  className="min-w-0 flex-1 truncate text-left text-xs text-ink"
-                  title={s.title}
-                  onClick={() => props.onSelect(s.id)}
-                  onDoubleClick={() => startRename(s)}
-                >
-                  {s.title}
-                </button>
-              )}
-              {editingId !== s.id &&
-                (confirmDeleteId === s.id ? (
-                  <span className="flex shrink-0 items-center gap-1 text-[10px]">
-                    <button
-                      type="button"
-                      className="rounded bg-bad/20 px-1.5 py-0.5 text-bad hover:bg-bad/30"
-                      disabled={busy}
-                      onClick={() => remove(s)}
-                    >
-                      删除
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded px-1.5 py-0.5 text-ink-3 hover:text-ink"
-                      onClick={() => setConfirmDeleteId(null)}
-                    >
-                      取消
-                    </button>
-                  </span>
-                ) : (
-                  <span className="hidden shrink-0 gap-0.5 group-hover:flex">
-                    <button
-                      type="button"
-                      title="重命名"
-                      className="rounded p-0.5 text-ink-3 hover:text-ink"
-                      onClick={() => startRename(s)}
-                    >
-                      <IconPencil />
-                    </button>
-                    <button
-                      type="button"
-                      title="删除会话"
-                      className="rounded p-0.5 text-ink-3 hover:text-bad"
-                      onClick={() => setConfirmDeleteId(s.id)}
-                    >
-                      <IconTrash />
-                    </button>
-                  </span>
-                ))}
-            </div>
-          );
-        })}
-      </nav>
-
-      {error && <div className="mx-3 mb-2 text-xs text-bad">{error}</div>}
-
-      {props.isAdmin && (
-        <div className="border-t border-line px-3 py-2">
-          <button
-            type="button"
-            className="w-full rounded border border-line-strong bg-card py-1.5 text-xs text-ink-2 transition-colors hover:border-accent hover:text-ink"
-            onClick={props.onAdmin}
-          >
-            管理后台
-          </button>
-        </div>
-      )}
-
-      <div className="border-t border-line px-3 py-2">
-        <button
-          type="button"
-          className="w-full rounded py-1 text-[11px] text-ink-3 transition-colors hover:text-accent-2"
-          onClick={() => setDomainOpen(true)}
-        >
-          ＋ 申请新域
-        </button>
-      </div>
 
       <div className="flex items-center justify-between border-t border-line px-4 py-3">
         <span className="truncate text-xs text-ink-2" title={username}>
@@ -225,17 +254,17 @@ export default function Sidebar(props: SidebarProps) {
   );
 }
 
-/** U1 经营导航项（主产品形态）：4px 左侧色条；高亮 bg-accent-soft，非高亮 hover:bg-lift。 */
-function NavItem({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
+/** P0 驾驶舱壳导航项（亮色 ck 系）：4px 左侧色条；高亮 bg-ck-primary-soft，非高亮 hover:bg-ck-card-soft。 */
+function NavItemCk({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
   return (
     <button
       type="button"
-      className={`flex w-full items-center gap-2 rounded px-3 py-2 text-sm transition-colors ${
-        active ? "bg-accent-soft font-medium text-ink" : "text-ink-2 hover:bg-lift"
+      className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors ${
+        active ? "bg-ck-primary-soft font-medium text-ck-ink" : "text-ck-ink-2 hover:bg-ck-card-soft"
       }`}
       onClick={onClick}
     >
-      <span className={`h-4 w-1 shrink-0 rounded-full ${active ? "bg-accent" : "bg-line-strong"}`} />
+      <span className={`h-4 w-1 shrink-0 rounded-full ${active ? "bg-ck-primary" : "bg-ck-line-strong"}`} />
       {label}
     </button>
   );

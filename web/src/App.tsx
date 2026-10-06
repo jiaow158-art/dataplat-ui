@@ -24,6 +24,7 @@ export default function App() {
   const [view, setView] = useState<"chat" | "admin" | "insights" | "events" | "subscriptions" | "targets" | "regions">("chat");
   const [insightsOn, setInsightsOn] = useState(false);
   const [openEventId, setOpenEventId] = useState<string | null>(null);
+  const [detailSource, setDetailSource] = useState<"insights" | "events" | "regions">("insights"); // P0 边界3——详情页侧栏高亮跟来源页
   const [followupSeed, setFollowupSeed] = useState<{ sessionId: string; question: string } | null>(null);
 
   const enter = useCallback(async (username: string, isAdmin: boolean) => {
@@ -71,7 +72,7 @@ export default function App() {
         username={boot.username}
         sessions={sessions}
         activeId={activeId}
-        activeView={view}
+        activeView={openEventId ? detailSource : view} // 详情打开中：侧栏高亮来源页
         isAdmin={boot.isAdmin}
         onAdmin={() => setView("admin")}
         insightsEnabled={insightsOn}
@@ -83,6 +84,7 @@ export default function App() {
         onSubscriptions={() => setView("subscriptions")}
         onTargets={() => setView("targets")}
         onRegionMap={() => setView("regions")}
+        onChat={() => setView("chat")}
         onSelect={(id) => {
           setActiveId(id);
           setView("chat"); // 驾驶舱/管理后台视图下点会话 → 切回对话（此前只改 activeId，主区停在驾驶舱回不去）
@@ -114,6 +116,7 @@ export default function App() {
       ) : view === "events" && insightsOn ? (
         <EventCenterPage
           onOpenEvent={(id) => {
+            setDetailSource("events");
             setOpenEventId(id);
             setView("insights"); // 详情页渲染在 insights 分支：设 id 的同时切视图才真的打开
           }}
@@ -130,6 +133,7 @@ export default function App() {
       ) : view === "regions" && insightsOn ? (
         <RegionBattleMapPage
           onOpenEvent={(id) => {
+            setDetailSource("regions");
             setOpenEventId(id);
             setView("insights"); // 详情页渲染在 insights 分支：设 id 的同时切视图才真的打开
           }}
@@ -138,7 +142,10 @@ export default function App() {
         openEventId ? (
           <EventDetailPage
             eventId={openEventId}
-            onBack={() => setOpenEventId(null)}
+            onBack={() => {
+              setOpenEventId(null);
+              setView(detailSource); // 返回来源页
+            }}
             onOpenEvent={(id) => setOpenEventId(id)}
             onFollowed={(r) => {
               setFollowupSeed({ sessionId: r.uiSessionId, question: r.seedQuestion });
@@ -148,7 +155,12 @@ export default function App() {
             }}
           />
         ) : (
-          <OperatingDashboardPage onOpenEvent={(id) => setOpenEventId(id)} />
+          <OperatingDashboardPage
+            onOpenEvent={(id) => {
+              setDetailSource("insights");
+              setOpenEventId(id);
+            }}
+          />
         )
       ) : (
         <ChatView
