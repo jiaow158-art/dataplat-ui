@@ -13,7 +13,10 @@ type RingStatus = { tone: Tone; tag: string; value: string | null };
 
 const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const fmt1 = (n: number) => n.toFixed(1);
-const off = (reason: string | null): RingStatus => ({ tone: "neutral", tag: "未接入", value: reason });
+// 降级 reason 消毒：异常 repr（OperationalError('…）不进正文，转友好文案；原文只留 title 提示
+const friendlyReason = (reason: string | null): string | null =>
+  reason && /Error|Traceback|Exception|\('/i.test(reason) ? "数据暂不可用" : reason;
+const off = (reason: string | null): RingStatus => ({ tone: "neutral", tag: "未接入", value: friendlyReason(reason) });
 // 域名简称：销售健康度→销售
 const domainLabel = (label: string) => label.replace(/健康度$/, "");
 
@@ -74,7 +77,7 @@ function StatusCell({ r }: { r: InsightHealthRing }) {
       )}
     </>
   );
-  if (!r.available) return <div className={cellCls}>{body}</div>; // 未接入：无 popover（沿用原行为）
+  if (!r.available) return <div className={cellCls} title={r.reason ?? undefined}>{body}</div>; // 未接入：无 popover（沿用原行为），原始 reason 进 title
   return (
     <div className="relative">
       <button
