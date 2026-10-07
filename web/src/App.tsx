@@ -1,6 +1,8 @@
 // UI-T5 应用根：启动探测 /api/me（401→登录屏，200→直接进主页）+ 登录/登出状态机。
 // v1 无路由库：登录/主页由 boot 状态切换；管理后台（M4）为 state 路由子视图——
 // 仅 /api/me.is_admin=1 时渲染入口，chat/admin 两视图共享侧栏导航。
+// P2-a 事件详情 = fixed 全屏 overlay：打开只设 openEventId 不切 view，来源页保持 mounted
+// （筛选/选中/滚动在关闭后原样保留）；浏览器 Back / ESC / 返回按钮三条关闭路径同语义。
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, apiCreateSession, apiInsightEnabled, apiListSessions, apiLogout, apiMe } from "./api";
 import type { UiSession } from "./types";
@@ -24,8 +26,9 @@ export default function App() {
   const [view, setView] = useState<"chat" | "admin" | "insights" | "events" | "subscriptions" | "targets" | "regions">("chat");
   const [insightsOn, setInsightsOn] = useState(false);
   const [openEventId, setOpenEventId] = useState<string | null>(null);
-  const [detailSource, setDetailSource] = useState<"insights" | "events" | "regions" | "targets">("insights"); // P0 边界3——详情页侧栏高亮跟来源页
+  const [detailSource, setDetailSource] = useState<"insights" | "events" | "regions" | "targets">("insights"); // 来源语义保留（P0 边界3）；overlay 模型下侧栏高亮恒跟 view，渲染不再读取
   const [followupSeed, setFollowupSeed] = useState<{ sessionId: string; question: string } | null>(null);
+  void detailSource; // 安抚 noUnusedLocals：状态保留供后续「返回来源」语义使用，各 onOpenEvent 仍照常赋值
 
   const enter = useCallback(async (username: string, isAdmin: boolean) => {
     setSessions(await apiListSessions());
@@ -56,6 +59,33 @@ export default function App() {
     setView("chat");
   }, [refreshSessions]);
 
+  // ===== P2-a 详情 overlay 开合 =====
+  // 边界1：Back / ESC / 返回按钮同语义——都只关 overlay，view 与来源页状态不动。
+  const closeDetail = useCallback(() => {
+    setOpenEventId(null);
+    // 消费打开时压入的 history 条目，让浏览器 Back 从来源页语义离开（幂等：popstate 再触发时已 null）
+    if (history.state?.insightDetail) history.back();
+  }, []);
+  // 打开（null→id 跳变）时压栈一条；嵌套跳转（overlay 内换事件）不重复压栈，Back 一次即关
+  const overlayOpen = openEventId !== null;
+  useEffect(() => {
+    if (overlayOpen) history.pushState({ insightDetail: true }, "");
+  }, [overlayOpen]);
+  // 浏览器 Back → popstate：还开着就关（不再额外 back，避免双退）
+  useEffect(() => {
+    const onPop = () => setOpenEventId((cur) => (cur ? null : cur));
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+  // ESC 关 overlay
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && openEventId) closeDetail();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [openEventId, closeDetail]);
+
   if (boot.kind === "loading") {
     return (
       <div className="flex h-full items-center justify-center bg-base text-sm text-ink-3">加载中…</div>
@@ -81,26 +111,46 @@ export default function App() {
         username={boot.username}
         sessions={sessions}
         activeId={activeId}
-        activeView={view === "insights" && openEventId ? detailSource : view} // 详情打开中（仅 insights 分支渲染）：侧栏高亮来源页
+        activeView={view} // overlay 模型：打开详情不再切 view，来源页侧栏高亮天然保持
         isAdmin={boot.isAdmin}
-        onAdmin={() => setView("admin")}
+        onAdmin={() => {
+          closeDetail(); // 任何导航离开都先关 overlay（幂等，含 history 条目消费）
+          setView("admin");
+        }}
         insightsEnabled={insightsOn}
         onInsights={() => {
+          closeDetail();
           setView("insights");
-          setOpenEventId(null);
         }}
-        onEventCenter={() => setView("events")}
-        onSubscriptions={() => setView("subscriptions")}
-        onTargets={() => setView("targets")}
-        onRegionMap={() => setView("regions")}
-        onChat={() => setView("chat")}
+        onEventCenter={() => {
+          closeDetail();
+          setView("events");
+        }}
+        onSubscriptions={() => {
+          closeDetail();
+          setView("subscriptions");
+        }}
+        onTargets={() => {
+          closeDetail();
+          setView("targets");
+        }}
+        onRegionMap={() => {
+          closeDetail();
+          setView("regions");
+        }}
+        onChat={() => {
+          closeDetail();
+          setView("chat");
+        }}
         onSelect={(id) => {
+          closeDetail();
           setActiveId(id);
           setView("chat"); // 驾驶舱/管理后台视图下点会话 → 切回对话（此前只改 activeId，主区停在驾驶舱回不去）
         }}
         onNew={async () => {
           const s = await apiCreateSession();
           await refreshSessions();
+          closeDetail();
           setActiveId(s.id); // 建带默认标题的空会话并选中；不选 = 首问自动建（UI-T6）
           setView("chat");
         }}
@@ -114,6 +164,7 @@ export default function App() {
           }
           setSessions([]);
           setActiveId(null);
+          closeDetail(); // 登出即关 overlay，防止换账号重登后复活上一账号的详情
           setView("chat");
           setBoot({ kind: "login" });
         }}
@@ -126,13 +177,13 @@ export default function App() {
         <EventCenterPage
           onOpenEvent={(id) => {
             setDetailSource("events");
-            setOpenEventId(id);
-            setView("insights"); // 详情页渲染在 insights 分支：设 id 的同时切视图才真的打开
+            setOpenEventId(id); // 只开 overlay，不切 view——事件中心保持 mounted（筛选/滚动保留）
           }}
           onFollowed={(r) => {
             // 与 EventDetailPage 同一编排（D-e7）：种下追问→切对话→刷会话列表
             setFollowupSeed({ sessionId: r.uiSessionId, question: r.seedQuestion });
             setActiveId(r.uiSessionId);
+            closeDetail();
             setView("chat");
             void refreshSessions();
           }}
@@ -141,8 +192,7 @@ export default function App() {
         <TargetManagementPage
           onOpenEvent={(id) => {
             setDetailSource("targets");
-            setOpenEventId(id);
-            setView("insights"); // 详情页渲染在 insights 分支：设 id 的同时切视图才真的打开
+            setOpenEventId(id); // 只开 overlay，不切 view
           }}
           onAsk={(q) => void askSeed(q)}
         />
@@ -150,37 +200,19 @@ export default function App() {
         <RegionBattleMapPage
           onOpenEvent={(id) => {
             setDetailSource("regions");
-            setOpenEventId(id);
-            setView("insights"); // 详情页渲染在 insights 分支：设 id 的同时切视图才真的打开
+            setOpenEventId(id); // 只开 overlay，不切 view——selectedRegion+metric 保留
           }}
           onOpenEventCenter={() => setView("events")}
           onAsk={(q) => void askSeed(q)}
         />
       ) : view === "insights" && insightsOn ? (
-        openEventId ? (
-          <EventDetailPage
-            eventId={openEventId}
-            onBack={() => {
-              setOpenEventId(null);
-              setView(detailSource); // 返回来源页
-            }}
-            onOpenEvent={(id) => setOpenEventId(id)}
-            onFollowed={(r) => {
-              setFollowupSeed({ sessionId: r.uiSessionId, question: r.seedQuestion });
-              setActiveId(r.uiSessionId);
-              setView("chat");
-              void refreshSessions();
-            }}
-          />
-        ) : (
-          <OperatingDashboardPage
-            onOpenEvent={(id) => {
-              setDetailSource("insights");
-              setOpenEventId(id);
-            }}
-            onOpenEventCenter={() => setView("events")}
-          />
-        )
+        <OperatingDashboardPage
+          onOpenEvent={(id) => {
+            setDetailSource("insights");
+            setOpenEventId(id); // 只开 overlay，驾驶舱保持 mounted
+          }}
+          onOpenEventCenter={() => setView("events")}
+        />
       ) : (
         <ChatView
           sessionId={active?.id ?? null}
@@ -193,6 +225,26 @@ export default function App() {
           autoAsk={followupSeed && followupSeed.sessionId === (active?.id ?? null) ? followupSeed.question : undefined}
           onAutoAskDone={() => setFollowupSeed(null)}
         />
+      )}
+      {/* P2-a 事件详情 overlay：fixed 全屏（不占 flex 流，root/aside 结构不动），来源页在下方保持
+          mounted——关闭后筛选/选中/滚动原样保留，且不触发底层页刷新（边界3）。
+          边界2：chat/admin 无入口打开详情，防御性排除兜底。 */}
+      {openEventId && insightsOn && view !== "chat" && view !== "admin" && (
+        <div className="fixed inset-0 z-40 flex flex-col bg-ck-bg">
+          <EventDetailPage
+            eventId={openEventId}
+            onBack={closeDetail} // 边界1：只关 overlay，view 不动即回来源页
+            onOpenEvent={(id) => setOpenEventId(id)} // 嵌套跳转：换 overlay 内容，底下来源页不动
+            onFollowed={(r) => {
+              // 与事件中心同一编排（D-e7）：种追问→切对话→刷会话列表；同时收起 overlay
+              setFollowupSeed({ sessionId: r.uiSessionId, question: r.seedQuestion });
+              setActiveId(r.uiSessionId);
+              closeDetail();
+              setView("chat");
+              void refreshSessions();
+            }}
+          />
+        </div>
       )}
     </div>
   );
