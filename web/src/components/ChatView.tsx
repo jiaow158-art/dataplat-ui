@@ -24,6 +24,8 @@ interface ChatViewProps {
   onFirstAsk: (uiSessionId: string) => void;
   /** 追问成功后刷侧栏（updated_at 排序）。 */
   onSessionActivity: () => void;
+  /** P3 边界1（方案B）：技术详情入口仅管理员——透传 RunStream。 */
+  isAdmin: boolean;
   /** 驾驶舱 followup 一次性种子：变化且匹配当前会话且空闲时自动发送一次。 */
   autoAsk?: string;
   onAutoAskDone?: () => void;
@@ -40,6 +42,7 @@ export default function ChatView({
   sessionTitle,
   onFirstAsk,
   onSessionActivity,
+  isAdmin,
   autoAsk,
   onAutoAskDone,
 }: ChatViewProps) {
@@ -130,20 +133,20 @@ export default function ChatView({
   };
 
   return (
-    <main className="flex min-w-0 flex-1 flex-col bg-base">
-      <div className="flex h-12 shrink-0 items-center border-b border-line bg-panel px-5">
-        <span className="truncate text-sm text-ink-2">{sessionTitle}</span>
+    <main className="flex min-w-0 flex-1 flex-col bg-ck-bg">
+      <div className="flex h-12 shrink-0 items-center border-b border-ck-line bg-ck-card px-5">
+        <span className="truncate text-sm text-ck-ink-2">{sessionTitle}</span>
       </div>
 
-      <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto">
+      <div ref={scrollRef} onScroll={onScroll} className="ck-scroll flex-1 overflow-y-auto">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6">
           {turns.length === 0 && !loadError && (
             <div className="flex flex-1 flex-col items-center justify-center gap-2 py-20 text-center">
-              <div className="text-lg font-medium text-ink">问点什么吧</div>
-              <div className="text-xs text-ink-3">例如：上月瓷砖事业部库存周转情况如何？</div>
+              <div className="text-lg font-medium text-ck-ink">问点什么吧</div>
+              <div className="text-xs text-ck-ink-3">例如：上月瓷砖事业部库存周转情况如何？</div>
             </div>
           )}
-          {loadError && <div className="rounded border border-bad/40 bg-bad/10 px-4 py-2 text-xs text-bad">{loadError}</div>}
+          {loadError && <div className="rounded-lg border border-ck-danger/40 bg-ck-danger-soft px-4 py-2 text-xs text-ck-danger">{loadError}</div>}
           {turns.map((t, i) =>
             t.kind === "history" ? (
               <HistoryTurn key={t.row.id} row={t.row} />
@@ -154,6 +157,7 @@ export default function ChatView({
                 question={t.question}
                 startedAt={t.startedAt}
                 uiSessionId={t.uiSessionId}
+                isAdmin={isAdmin}
                 onRetry={(q) => {
                   setTurns((xs) => xs.filter((_, j) => j !== i));
                   void ask(q);
@@ -162,20 +166,20 @@ export default function ChatView({
             ) : t.kind === "submitting" ? (
               <div key={`sub-${i}`} className="flex flex-col gap-3">
                 <div className="flex justify-end">
-                  <div className="max-w-[85%] rounded-lg rounded-br-sm bg-accent-soft px-4 py-2.5 text-sm text-ink">{t.question}</div>
+                  <div className="max-w-[85%] rounded-lg rounded-br-sm bg-ck-primary-soft px-4 py-2.5 text-sm text-ck-ink">{t.question}</div>
                 </div>
-                <div className="flex items-center gap-2 text-xs text-ink-3">已提交，等待任务受理…</div>
+                <div className="flex items-center gap-2 text-xs text-ck-ink-3">已提交，等待任务受理…</div>
               </div>
             ) : (
               <div key={`fail-${i}`} className="flex flex-col gap-3">
                 <div className="flex justify-end">
-                  <div className="max-w-[85%] rounded-lg rounded-br-sm bg-accent-soft px-4 py-2.5 text-sm text-ink">{t.question}</div>
+                  <div className="max-w-[85%] rounded-lg rounded-br-sm bg-ck-primary-soft px-4 py-2.5 text-sm text-ck-ink">{t.question}</div>
                 </div>
-                <div className="flex items-center justify-between rounded border border-bad/40 bg-bad/10 px-4 py-3 text-xs">
-                  <span className="text-bad">提交失败 · {t.message}</span>
+                <div className="flex items-center justify-between rounded-lg border border-ck-danger/40 bg-ck-danger-soft px-4 py-3 text-xs">
+                  <span className="text-ck-danger">提交失败 · {t.message}</span>
                   <button
                     type="button"
-                    className="rounded border border-bad/50 px-2.5 py-1 text-xs text-bad hover:bg-bad/20"
+                    className="rounded border border-ck-danger/50 px-2.5 py-1 text-xs text-ck-danger hover:bg-ck-danger/20"
                     onClick={() => retrySubmit(t.question)}
                   >
                     重新提问
@@ -210,10 +214,10 @@ function Composer({ disabled, onSend }: { disabled: boolean; onSend: (q: string)
   };
 
   return (
-    <div className="shrink-0 border-t border-line bg-panel px-4 py-3">
+    <div className="shrink-0 border-t border-ck-line bg-ck-card px-4 py-3">
       <div className="mx-auto flex w-full max-w-3xl items-end gap-2">
         <textarea
-          className="max-h-40 min-h-[2.5rem] flex-1 resize-none rounded border border-line bg-card px-3 py-2 text-sm text-ink outline-none focus:border-accent disabled:opacity-60"
+          className="max-h-40 min-h-[2.5rem] flex-1 resize-none rounded-lg border border-ck-line-strong bg-ck-card px-3 py-2 text-sm text-ck-ink outline-none focus:border-ck-primary disabled:opacity-60"
           rows={1}
           placeholder="输入问题，Enter 发送（Shift+Enter 换行）"
           value={draft}
@@ -223,7 +227,7 @@ function Composer({ disabled, onSend }: { disabled: boolean; onSend: (q: string)
         />
         <button
           type="button"
-          className="rounded bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-2 disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-lg bg-ck-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-ck-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
           disabled={disabled || !draft.trim()}
           onClick={send}
         >

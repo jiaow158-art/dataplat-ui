@@ -3,14 +3,14 @@
 export default function ReportCard({ runId }: { runId: string }) {
   const base = `/api/reports?run_id=${encodeURIComponent(runId)}`;
   return (
-    <div className="mt-2 flex items-center justify-between rounded border border-line bg-card px-4 py-3">
-      <div className="flex items-center gap-2 text-sm text-ink">
+    <div className="mt-2 flex items-center justify-between rounded-xl border border-ck-line bg-ck-card px-4 py-3 shadow-ck">
+      <div className="flex items-center gap-2 text-sm text-ck-ink">
         <IconReport />
         <span>分析报告已生成</span>
       </div>
       <div className="flex gap-2">
         <a
-          className="rounded border border-line-strong px-3 py-1 text-xs text-ink-2 transition-colors hover:border-accent hover:text-ink"
+          className="rounded border border-ck-line-strong px-3 py-1 text-xs text-ck-ink-2 transition-colors hover:border-ck-primary hover:text-ck-ink"
           href={`/report?run_id=${encodeURIComponent(runId)}`}
           target="_blank"
           rel="noopener noreferrer"
@@ -18,7 +18,7 @@ export default function ReportCard({ runId }: { runId: string }) {
           预览
         </a>
         <a
-          className="rounded bg-accent px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-accent-2"
+          className="rounded bg-ck-primary px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-ck-primary-hover"
           href={`${base}&download=1`}
         >
           下载
@@ -29,7 +29,7 @@ export default function ReportCard({ runId }: { runId: string }) {
 }
 
 const IconReport = () => (
-  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true" className="text-accent-2">
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true" className="text-ck-primary">
     <path
       d="M9 1.5H3.5A1 1 0 0 0 2.5 2.5v11a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V5L9 1.5Z"
       stroke="currentColor"

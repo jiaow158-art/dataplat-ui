@@ -125,7 +125,7 @@ export default function Sidebar(props: SidebarProps) {
           <div className={`px-3 ${props.insightsEnabled ? "mt-1.5" : "pt-3"}`}>
             <button
               type="button"
-              className="w-full rounded border border-line-strong bg-card py-1.5 text-xs text-ink-2 transition-colors hover:border-accent hover:text-ink"
+              className="w-full rounded border border-ck-line-strong bg-ck-card py-1.5 text-xs text-ck-ink-2 transition-colors hover:border-ck-primary hover:text-ck-ink"
               disabled={busy}
               onClick={() => guard(props.onNew)}
             >
@@ -135,7 +135,7 @@ export default function Sidebar(props: SidebarProps) {
 
           <nav className="mt-2 flex-1 overflow-y-auto px-2 pb-2">
             {sessions.length === 0 && (
-              <div className="px-2 py-6 text-center text-xs text-ink-3">暂无会话，新建一个开始提问</div>
+              <div className="px-2 py-6 text-center text-xs text-ck-ink-3">暂无会话，新建一个开始提问</div>
             )}
             {sessions.map((s) => {
               const active = s.id === activeId;
@@ -143,13 +143,13 @@ export default function Sidebar(props: SidebarProps) {
                 <div
                   key={s.id}
                   className={`group mb-0.5 flex items-center gap-1 rounded px-2 py-1.5 ${
-                    active ? "bg-accent-soft" : "hover:bg-lift"
+                    active ? "bg-ck-primary-soft" : "hover:bg-ck-card-soft"
                   }`}
                 >
                   {editingId === s.id ? (
                     <input
                       autoFocus
-                      className="min-w-0 flex-1 rounded border border-accent bg-card px-1.5 py-0.5 text-xs text-ink outline-none"
+                      className="min-w-0 flex-1 rounded border border-ck-primary bg-ck-card px-1.5 py-0.5 text-xs text-ck-ink outline-none"
                       value={editTitle}
                       onChange={(e) => setEditTitle(e.target.value)}
                       onBlur={() => commitRename(s.id)}
@@ -158,7 +158,7 @@ export default function Sidebar(props: SidebarProps) {
                   ) : (
                     <button
                       type="button"
-                      className="min-w-0 flex-1 truncate text-left text-xs text-ink"
+                      className="min-w-0 flex-1 truncate text-left text-xs text-ck-ink"
                       title={s.title}
                       onClick={() => props.onSelect(s.id)}
                       onDoubleClick={() => startRename(s)}
@@ -171,7 +171,7 @@ export default function Sidebar(props: SidebarProps) {
                       <span className="flex shrink-0 items-center gap-1 text-[10px]">
                         <button
                           type="button"
-                          className="rounded bg-bad/20 px-1.5 py-0.5 text-bad hover:bg-bad/30"
+                          className="rounded bg-ck-danger-soft px-1.5 py-0.5 text-ck-danger hover:opacity-80"
                           disabled={busy}
                           onClick={() => remove(s)}
                         >
@@ -179,7 +179,7 @@ export default function Sidebar(props: SidebarProps) {
                         </button>
                         <button
                           type="button"
-                          className="rounded px-1.5 py-0.5 text-ink-3 hover:text-ink"
+                          className="rounded px-1.5 py-0.5 text-ck-ink-3 hover:text-ck-ink"
                           onClick={() => setConfirmDeleteId(null)}
                         >
                           取消
@@ -190,7 +190,7 @@ export default function Sidebar(props: SidebarProps) {
                         <button
                           type="button"
                           title="重命名"
-                          className="rounded p-0.5 text-ink-3 hover:text-ink"
+                          className="rounded p-0.5 text-ck-ink-3 hover:text-ck-ink"
                           onClick={() => startRename(s)}
                         >
                           <IconPencil />
@@ -198,7 +198,7 @@ export default function Sidebar(props: SidebarProps) {
                         <button
                           type="button"
                           title="删除会话"
-                          className="rounded p-0.5 text-ink-3 hover:text-bad"
+                          className="rounded p-0.5 text-ck-ink-3 hover:text-ck-danger"
                           onClick={() => setConfirmDeleteId(s.id)}
                         >
                           <IconTrash />
@@ -210,13 +210,13 @@ export default function Sidebar(props: SidebarProps) {
             })}
           </nav>
 
-          {error && <div className="mx-3 mb-2 text-xs text-bad">{error}</div>}
+          {error && <div className="mx-3 mb-2 text-xs text-ck-danger">{error}</div>}
 
           {props.isAdmin && (
-            <div className="border-t border-line px-3 py-2">
+            <div className="border-t border-ck-line px-3 py-2">
               <button
                 type="button"
-                className="w-full rounded border border-line-strong bg-card py-1.5 text-xs text-ink-2 transition-colors hover:border-accent hover:text-ink"
+                className="w-full rounded border border-ck-line-strong bg-ck-card py-1.5 text-xs text-ck-ink-2 transition-colors hover:border-ck-primary hover:text-ck-ink"
                 onClick={props.onAdmin}
               >
                 管理后台
@@ -224,10 +224,10 @@ export default function Sidebar(props: SidebarProps) {
             </div>
           )}
 
-          <div className="border-t border-line px-3 py-2">
+          <div className="border-t border-ck-line px-3 py-2">
             <button
               type="button"
-              className="w-full rounded py-1 text-[11px] text-ink-3 transition-colors hover:text-accent-2"
+              className="w-full rounded py-1 text-[11px] text-ck-ink-3 transition-colors hover:text-ck-primary"
               onClick={() => setDomainOpen(true)}
             >
               ＋ 申请新域
@@ -236,13 +236,13 @@ export default function Sidebar(props: SidebarProps) {
         </>
       )}
 
-      <div className="flex items-center justify-between border-t border-line px-4 py-3">
-        <span className="truncate text-xs text-ink-2" title={username}>
+      <div className="flex items-center justify-between border-t border-ck-line px-4 py-3">
+        <span className="truncate text-xs text-ck-ink-2" title={username}>
           {username}
         </span>
         <button
           type="button"
-          className="rounded px-2 py-1 text-xs text-ink-3 transition-colors hover:text-ink"
+          className="rounded px-2 py-1 text-xs text-ck-ink-3 transition-colors hover:text-ck-ink"
           onClick={props.onLogout}
         >
           登出
@@ -297,16 +297,16 @@ function DomainRequestModal({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={done ? onClose : undefined}>
-      <div className="w-[26rem] rounded-lg border border-line bg-panel p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={done ? onClose : undefined}>
+      <div className="w-[26rem] rounded-xl border border-ck-line bg-ck-card p-5 shadow-ck" onClick={(e) => e.stopPropagation()}>
         {done ? (
           <div>
-            <div className="text-sm font-semibold text-good">已提交</div>
-            <div className="mt-2 text-xs text-ink-2">已提交，受理后会联系你。</div>
+            <div className="text-sm font-semibold text-ck-success">已提交</div>
+            <div className="mt-2 text-xs text-ck-ink-2">已提交，受理后会联系你。</div>
             <div className="mt-4 text-right">
               <button
                 type="button"
-                className="rounded bg-accent px-3 py-1.5 text-xs text-white hover:bg-accent-2"
+                className="rounded bg-ck-primary px-3 py-1.5 text-xs text-white hover:bg-ck-primary-hover"
                 onClick={onClose}
               >
                 好的
@@ -315,15 +315,15 @@ function DomainRequestModal({ onClose }: { onClose: () => void }) {
           </div>
         ) : (
           <div>
-            <div className="text-sm font-semibold text-ink">申请新域</div>
-            <div className="mt-1 text-[11px] text-ink-3">
+            <div className="text-sm font-semibold text-ck-ink">申请新域</div>
+            <div className="mt-1 text-[11px] text-ck-ink-3">
               当前未覆盖的业务域（如采购、人力资源等）——受理后会按扩域流程建设知识库。
             </div>
-            <label className="mt-3 block text-xs text-ink-3">
+            <label className="mt-3 block text-xs text-ck-ink-3">
               域名（2-40 字）
               <input
                 autoFocus
-                className="mt-1 w-full rounded border border-line bg-card px-2 py-1.5 text-xs text-ink outline-none focus:border-accent"
+                className="mt-1 w-full rounded border border-ck-line bg-ck-card px-2 py-1.5 text-xs text-ck-ink outline-none focus:border-ck-primary"
                 maxLength={40}
                 placeholder="如：采购域"
                 value={domain}
@@ -331,10 +331,10 @@ function DomainRequestModal({ onClose }: { onClose: () => void }) {
                 disabled={busy}
               />
             </label>
-            <label className="mt-3 block text-xs text-ink-3">
+            <label className="mt-3 block text-xs text-ck-ink-3">
               典型问题（选填，≤1000 字——你平时想问什么）
               <textarea
-                className="mt-1 h-24 w-full resize-none rounded border border-line bg-card px-2 py-1.5 text-xs text-ink outline-none focus:border-accent"
+                className="mt-1 h-24 w-full resize-none rounded border border-ck-line bg-ck-card px-2 py-1.5 text-xs text-ck-ink outline-none focus:border-ck-primary"
                 maxLength={1000}
                 placeholder={"如：本月采购金额Top供应商？\n瓷砖原料库存周转如何？"}
                 value={questions}
@@ -342,7 +342,7 @@ function DomainRequestModal({ onClose }: { onClose: () => void }) {
                 disabled={busy}
               />
             </label>
-            <div className="mt-3 text-xs text-ink-3">
+            <div className="mt-3 text-xs text-ck-ink-3">
               急迫度
               <div className="mt-1 flex gap-1">
                 {(["高", "中", "低"] as const).map((u) => (
@@ -350,7 +350,7 @@ function DomainRequestModal({ onClose }: { onClose: () => void }) {
                     key={u}
                     type="button"
                     className={`rounded px-3 py-1 text-xs transition-colors ${
-                      urgency === u ? "bg-accent-soft text-ink" : "text-ink-3 hover:text-ink"
+                      urgency === u ? "bg-ck-primary-soft text-ck-ink" : "text-ck-ink-3 hover:text-ck-ink"
                     }`}
                     onClick={() => setUrgency(u)}
                     disabled={busy}
@@ -360,11 +360,11 @@ function DomainRequestModal({ onClose }: { onClose: () => void }) {
                 ))}
               </div>
             </div>
-            {error && <div className="mt-3 text-xs text-bad">{error}</div>}
+            {error && <div className="mt-3 text-xs text-ck-danger">{error}</div>}
             <div className="mt-4 flex justify-end gap-2">
               <button
                 type="button"
-                className="rounded border border-line px-3 py-1.5 text-xs text-ink-2 transition-colors hover:border-accent hover:text-ink"
+                className="rounded border border-ck-line px-3 py-1.5 text-xs text-ck-ink-2 transition-colors hover:border-ck-primary hover:text-ck-ink"
                 disabled={busy}
                 onClick={onClose}
               >
@@ -372,7 +372,7 @@ function DomainRequestModal({ onClose }: { onClose: () => void }) {
               </button>
               <button
                 type="button"
-                className="rounded bg-accent px-3 py-1.5 text-xs text-white hover:bg-accent-2 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded bg-ck-primary px-3 py-1.5 text-xs text-white hover:bg-ck-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
                 disabled={busy || !valid}
                 onClick={() => void submit()}
               >

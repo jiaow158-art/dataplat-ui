@@ -94,11 +94,12 @@ body {
   border-radius: 4px;
 }
 
-/* 回答正文 markdown 排版（经 rehype-sanitize 白名单后的受控标签集） */
+/* 回答正文 markdown 排版（经 rehype-sanitize 白名单后的受控标签集）。
+   P3：随 AI问数 浅色化改用 ck 亮色系——md-body 仅 chat 组件引用（admin 零使用，改前已核）。 */
 .md-body {
   font-size: 0.875rem;
   line-height: 1.75;
-  color: var(--color-ink);
+  color: var(--color-ck-ink);
   overflow-wrap: break-word;
 }
 .md-body > :first-child {
@@ -112,15 +113,19 @@ body {
 .md-body h3,
 .md-body h4 {
   font-weight: 600;
-  color: var(--color-ink);
-  margin: 1.1em 0 0.45em;
+  color: var(--color-ck-ink);
+  margin: 1.15em 0 0.5em;
   line-height: 1.35;
 }
 .md-body h1 {
-  font-size: 1.15rem;
+  font-size: 1.25rem;
+  padding-bottom: 0.35em;
+  border-bottom: 1px solid var(--color-ck-line);
 }
 .md-body h2 {
-  font-size: 1.05rem;
+  font-size: 1.1rem;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--color-ck-line);
 }
 .md-body h3,
 .md-body h4 {
@@ -144,22 +149,22 @@ body {
   margin: 0.2em 0;
 }
 .md-body a {
-  color: var(--color-accent-2);
+  color: var(--color-ck-primary);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 .md-body code {
   font-family: ui-monospace, Consolas, monospace;
   font-size: 0.82em;
-  background: var(--color-lift);
-  border: 1px solid var(--color-line);
+  background: var(--color-ck-primary-soft);
+  border: 1px solid var(--color-ck-line);
   border-radius: 4px;
   padding: 0.1em 0.35em;
-  color: var(--color-accent-2);
+  color: var(--color-ck-primary-hover);
 }
 .md-body pre {
-  background: var(--color-base);
-  border: 1px solid var(--color-line);
+  background: var(--color-ck-card-soft);
+  border: 1px solid var(--color-ck-line);
   border-radius: 6px;
   padding: 0.75rem 0.9rem;
   overflow-x: auto;
@@ -169,14 +174,17 @@ body {
   background: none;
   border: none;
   padding: 0;
-  color: var(--color-ink-2);
+  color: var(--color-ck-ink-2);
   font-size: 0.8rem;
 }
+/* blockquote → callout：主色左边条 + soft 底（GFM 无 admonition 语法，不按关键词猜语义） */
 .md-body blockquote {
-  border-left: 2px solid var(--color-accent);
-  padding-left: 0.9em;
+  background: var(--color-ck-primary-soft);
+  border-left: 3px solid var(--color-ck-primary);
+  border-radius: 0 6px 6px 0;
+  padding: 0.5em 0.9em;
   margin: 0.6em 0;
-  color: var(--color-ink-2);
+  color: var(--color-ck-ink-2);
 }
 .md-body table {
   border-collapse: collapse;
@@ -185,19 +193,24 @@ body {
   display: block;
   max-width: 100%;
   overflow-x: auto;
+  font-variant-numeric: tabular-nums;
 }
 .md-body th,
 .md-body td {
-  border: 1px solid var(--color-line);
-  padding: 0.3em 0.7em;
+  border: 1px solid var(--color-ck-line);
+  padding: 0.35em 0.7em;
   text-align: left;
 }
 .md-body th {
-  background: var(--color-lift);
+  background: var(--color-ck-card-soft);
   font-weight: 600;
+  color: var(--color-ck-ink);
+}
+.md-body tbody tr:nth-child(even) {
+  background: var(--color-ck-bg);
 }
 .md-body hr {
   border: none;
-  border-top: 1px solid var(--color-line);
+  border-top: 1px solid var(--color-ck-line);
   margin: 1em 0;
 }

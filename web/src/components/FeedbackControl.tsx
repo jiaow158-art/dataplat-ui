@@ -30,14 +30,14 @@ export default function FeedbackControl({ runId, uiSessionId }: { runId: string;
   };
 
   if (done) {
-    return <div className="text-xs text-ink-3">已记录，感谢反馈</div>;
+    return <div className="text-xs text-ck-ink-3">已记录，感谢反馈</div>;
   }
 
   if (!open) {
     return (
       <button
         type="button"
-        className="w-fit rounded px-1 py-0.5 text-xs text-ink-3 transition-colors hover:text-ink"
+        className="w-fit rounded px-1 py-0.5 text-xs text-ck-ink-3 transition-colors hover:text-ck-ink"
         onClick={() => setOpen(true)}
       >
         有问题
@@ -46,11 +46,11 @@ export default function FeedbackControl({ runId, uiSessionId }: { runId: string;
   }
 
   return (
-    <div className="flex flex-col gap-2 rounded-lg border border-line bg-panel px-3 py-2.5 text-xs">
+    <div className="flex flex-col gap-2 rounded-lg border border-ck-line bg-ck-card px-3 py-2.5 text-xs">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-ink-2">这个问题属于：</span>
+        <span className="text-ck-ink-2">这个问题属于：</span>
         <select
-          className="rounded border border-line bg-card px-2 py-1 text-xs text-ink outline-none focus:border-accent"
+          className="rounded border border-ck-line bg-ck-card px-2 py-1 text-xs text-ck-ink outline-none focus:border-ck-primary"
           value={category}
           onChange={(e) => setCategory(e.target.value as FeedbackCategory)}
           disabled={busy}
@@ -64,7 +64,7 @@ export default function FeedbackControl({ runId, uiSessionId }: { runId: string;
         </select>
       </div>
       <textarea
-        className="min-h-[3rem] resize-y rounded border border-line bg-card px-2.5 py-1.5 text-xs text-ink outline-none focus:border-accent"
+        className="min-h-[3rem] resize-y rounded border border-ck-line bg-ck-card px-2.5 py-1.5 text-xs text-ck-ink outline-none focus:border-ck-primary"
         rows={2}
         maxLength={500}
         placeholder="补充说明（选填，≤500 字）：期望的数值/口径或看不懂的位置"
@@ -72,11 +72,11 @@ export default function FeedbackControl({ runId, uiSessionId }: { runId: string;
         onChange={(e) => setDescription(e.target.value)}
         disabled={busy}
       />
-      {error && <div className="text-bad">{error}</div>}
+      {error && <div className="text-ck-danger">{error}</div>}
       <div className="flex items-center gap-2">
         <button
           type="button"
-          className="rounded bg-accent px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-accent-2 disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded bg-ck-primary px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-ck-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
           disabled={busy || !category}
           onClick={() => void submit()}
         >
@@ -84,7 +84,7 @@ export default function FeedbackControl({ runId, uiSessionId }: { runId: string;
         </button>
         <button
           type="button"
-          className="rounded px-2 py-1 text-xs text-ink-3 transition-colors hover:text-ink"
+          className="rounded px-2 py-1 text-xs text-ck-ink-3 transition-colors hover:text-ck-ink"
           disabled={busy}
           onClick={() => setOpen(false)}
         >

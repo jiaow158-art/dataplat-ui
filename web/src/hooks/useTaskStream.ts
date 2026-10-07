@@ -25,6 +25,13 @@ export interface SqlRecord {
   elapsedMs: number | null;
 }
 
+/** stage 事件原始轨迹（P3 层2/层3 的过程数据源）：stage 词表 + 事件自带 text（工具名/原文）。
+ *  只追加不去重计数——幂等由 SSE 帧级去重保证（见 listener 内 seenIds）。 */
+export interface StageMark {
+  stage: string;
+  text: string | null;
+}
+
 export interface DoneInfo {
   status: string;
   elapsedMs: number | null;
@@ -39,6 +46,8 @@ export interface StreamState {
   stageText: string | null; // 事件自带 text 优先，否则词表映射
   attempt: number;
   sqls: SqlRecord[];
+  /** stage 事件轨迹（按到达序追加；层2 分组/层3 工具行的唯一过程数据源）。 */
+  timeline: StageMark[];
   answer: string | null;
   reportPath: string | null;
   error: { code: string; message: string } | null;
@@ -54,6 +63,7 @@ const initialState = (): StreamState => ({
   stageText: null,
   attempt: 0,
   sqls: [],
+  timeline: [],
   answer: null,
   reportPath: null,
   error: null,
@@ -139,6 +149,8 @@ export function useTaskStream(runId: string, onTerminal?: () => void): StreamSta
             stage,
             stageText: text,
             attempt: typeof p.attempt === "number" ? p.attempt : cur.attempt,
+            // 原始 text（非词表兜底值）入轨迹：层3 工具行展示用
+            timeline: [...cur.timeline, { stage, text: typeof p.text === "string" ? p.text : null }],
           });
           break;
         }
@@ -193,6 +205,12 @@ export function useTaskStream(runId: string, onTerminal?: () => void): StreamSta
       }
     };
 
+    // P3 边界2（重连幂等）：网关每帧带 `id: seq`，BFF 字节透传，重连补发按 Last-Event-ID 裁剪——
+    // 正常路径本无重复帧；此守卫是防御纵深（Last-Event-ID 丢失/代理重启等场景的重叠帧）：
+    // 按 lastEventId 丢弃重复帧，保证 timeline/计数/SQL 列表在重连后绝不翻倍。
+    // 刷新/重挂场景（全新 EventSource、无 Last-Event-ID → 网关从 seq 0 全量重放）不受影响：
+    // 本 effect 先建 fresh state + 空 seenIds，全量重放正是所需。
+    const seenIds = new Set<string>();
     for (const t of EVENT_TYPES) {
       es.addEventListener(t, (ev) => {
         if (t === "error" && typeof (ev as MessageEvent).data !== "string") {
@@ -206,6 +224,11 @@ export function useTaskStream(runId: string, onTerminal?: () => void): StreamSta
             patch({ conn: "reconnecting" });
           }
           return;
+        }
+        const sid = (ev as MessageEvent).lastEventId;
+        if (sid) {
+          if (seenIds.has(sid)) return; // 与已收帧重叠（同 seq）：幂等丢弃
+          seenIds.add(sid);
         }
         handle(t, (ev as MessageEvent).data);
       });
