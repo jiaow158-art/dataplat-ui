@@ -81,13 +81,11 @@ function ProcessBlock({ s, isAdmin, doneCount, elapsedMs }: { s: StreamState; is
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ck-ink-3">
-        {failed ? (
-          <span className="font-medium text-ck-danger">✗ 任务失败</span>
-        ) : s.done?.status === "cancelled" ? (
+        {s.done?.status === "cancelled" ? (
           <span>任务已取消</span>
-        ) : (
+        ) : !failed ? (
           <span className="font-medium text-ck-success">✓ 分析完成</span>
-        )}
+        ) : null /* 失败文案由 ErrorBar 承担（收尾行不重复“任务失败”字样，review finding） */}
         {!failed && doneCount > 0 && <span>已完成 {doneCount} 项数据查询与分析</span>}
         {s.done?.elapsedMs != null && <span>总耗时 {fmtElapsed(s.done.elapsedMs)}</span>}
         {s.done?.recovered && (

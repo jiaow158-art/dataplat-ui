@@ -143,7 +143,7 @@ export default function Sidebar(props: SidebarProps) {
                 <div
                   key={s.id}
                   className={`group mb-0.5 flex items-center gap-1 rounded px-2 py-1.5 ${
-                    active ? "bg-ck-primary-soft" : "hover:bg-ck-card-soft"
+                    active ? "bg-ck-primary-soft" : "hover:bg-[#ecf2fa]"
                   }`}
                 >
                   {editingId === s.id ? (
@@ -158,7 +158,7 @@ export default function Sidebar(props: SidebarProps) {
                   ) : (
                     <button
                       type="button"
-                      className="min-w-0 flex-1 truncate text-left text-xs text-ck-ink"
+                      className={`min-w-0 flex-1 truncate text-left text-xs ${active ? "font-medium text-ck-primary" : "text-ck-ink"}`}
                       title={s.title}
                       onClick={() => props.onSelect(s.id)}
                       onDoubleClick={() => startRename(s)}
