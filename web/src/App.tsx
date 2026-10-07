@@ -92,9 +92,10 @@ export default function App() {
 
   // P2-b B2：事件→区域作战地图（事件中心只对唯一大区足迹出链接）：种一次性 focus 并切视图
   const openRegionFocus = useCallback((r: string) => {
+    closeDetail(); // 导航统一关 overlay（review P2-b finding 1，键盘路径可达）
     setRegionFocus(r);
     setView("regions");
-  }, []);
+  }, [closeDetail]);
 
   if (boot.kind === "loading") {
     return (
@@ -198,7 +199,7 @@ export default function App() {
             void refreshSessions();
           }}
           onOpenRegion={openRegionFocus}
-          onOpenTargetPage={() => setView("targets")} // B3：target_gap 类型级跳转
+          onOpenTargetPage={() => { closeDetail(); setView("targets"); }} // B3：target_gap 类型级跳转
         />
       ) : view === "targets" && insightsOn ? (
         <TargetManagementPage
@@ -232,7 +233,7 @@ export default function App() {
             closeDetail(); // 跳事件中心同属导航离开，先关 overlay（幂等）
             setView("events");
           }}
-          onOpenTarget={() => setView("targets")} // B1：经营概览·目标进度 → 目标管理
+          onOpenTarget={() => { closeDetail(); setView("targets"); }} // B1：经营概览·目标进度 → 目标管理
         />
       ) : (
         <ChatView
