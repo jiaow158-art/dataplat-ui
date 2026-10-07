@@ -50,22 +50,13 @@ export default function App() {
     setSessions(await apiListSessions());
   }, []);
 
-  // P1-2 区域页「让AI分析」：预建会话→种 followup 问题→切对话（同 followup 编排；ChatView autoAsk 需已存在会话）
-  const askSeed = useCallback(async (question: string) => {
-    const s = await apiCreateSession();
-    await refreshSessions();
-    setActiveId(s.id);
-    setFollowupSeed({ sessionId: s.id, question });
-    setView("chat");
-  }, [refreshSessions]);
-
   // ===== P2-a 详情 overlay 开合 =====
   // 边界1：Back / ESC / 返回按钮同语义——都只关 overlay，view 与来源页状态不动。
   const closeDetail = useCallback(() => {
+    // 仅真开着才消费压栈条目（防刷新后残留 stale 标记的幽灵 back）；幂等：popstate 再触发时已 null
+    if (openEventId && history.state?.insightDetail) history.back();
     setOpenEventId(null);
-    // 消费打开时压入的 history 条目，让浏览器 Back 从来源页语义离开（幂等：popstate 再触发时已 null）
-    if (history.state?.insightDetail) history.back();
-  }, []);
+  }, [openEventId]);
   // 打开（null→id 跳变）时压栈一条；嵌套跳转（overlay 内换事件）不重复压栈，Back 一次即关
   const overlayOpen = openEventId !== null;
   useEffect(() => {
@@ -85,6 +76,17 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [openEventId, closeDetail]);
+
+  // P1-2 区域页「让AI分析」：预建会话→种 followup 问题→切对话（同 followup 编排；ChatView autoAsk 需已存在会话）。
+  // 定义在 closeDetail 之后：closeDetail 入 deps，防 stale 闭包漏消费 history 条目。
+  const askSeed = useCallback(async (question: string) => {
+    const s = await apiCreateSession();
+    await refreshSessions();
+    setActiveId(s.id);
+    setFollowupSeed({ sessionId: s.id, question });
+    closeDetail(); // 由此切走视图同样收起 overlay（幂等）
+    setView("chat");
+  }, [refreshSessions, closeDetail]);
 
   if (boot.kind === "loading") {
     return (
@@ -202,7 +204,10 @@ export default function App() {
             setDetailSource("regions");
             setOpenEventId(id); // 只开 overlay，不切 view——selectedRegion+metric 保留
           }}
-          onOpenEventCenter={() => setView("events")}
+          onOpenEventCenter={() => {
+            closeDetail(); // 跳事件中心同属导航离开，先关 overlay（幂等）
+            setView("events");
+          }}
           onAsk={(q) => void askSeed(q)}
         />
       ) : view === "insights" && insightsOn ? (
@@ -211,7 +216,10 @@ export default function App() {
             setDetailSource("insights");
             setOpenEventId(id); // 只开 overlay，驾驶舱保持 mounted
           }}
-          onOpenEventCenter={() => setView("events")}
+          onOpenEventCenter={() => {
+            closeDetail(); // 跳事件中心同属导航离开，先关 overlay（幂等）
+            setView("events");
+          }}
         />
       ) : (
         <ChatView
@@ -230,8 +238,9 @@ export default function App() {
           mounted——关闭后筛选/选中/滚动原样保留，且不触发底层页刷新（边界3）。
           边界2：chat/admin 无入口打开详情，防御性排除兜底。 */}
       {openEventId && insightsOn && view !== "chat" && view !== "admin" && (
-        <div className="fixed inset-0 z-40 flex flex-col bg-ck-bg">
+        <div className="fixed inset-0 z-40 flex flex-col bg-ck-bg" role="dialog" aria-modal="true">
           <EventDetailPage
+            key={openEventId} // 换事件即重挂载：嵌套跳转回到顶部，不带旧事件残留态
             eventId={openEventId}
             onBack={closeDetail} // 边界1：只关 overlay，view 不动即回来源页
             onOpenEvent={(id) => setOpenEventId(id)} // 嵌套跳转：换 overlay 内容，底下来源页不动
