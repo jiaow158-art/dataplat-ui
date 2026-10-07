@@ -1,54 +1,341 @@
-// M-i7 目标管理页（spec 2026-10-02 §4；P0-T5 改版）：年度目标环 / 进度与缺口（P4 事实卡，
-// 未验证预测值全禁，types.ts 载荷字段留而未读）/ 月度达成表 / 组织缺口拆解（外推列已删，
-// API payload 不动仅 UI 停渲染）。口径全在服务端（公式随响应下发，本页零计算——P4 两指标
-// 为载荷值的确定性算术，非预测）；纯只读页——followup 是事件编排（/events/:id/followup 需
-// 宿主事件 id），本页无宿主事件故不设追问入口（计划 Task 4 修正：追问在经营事件中心对
-// 目标类事件点「继续分析」）。
+// P1-3 目标管理产品化：目标经营入口五层——L1 KPI Strip（距年度目标，裁定1）/ L2 目标累计进度
+// 同口径双线（当月目标点=月目标×月工作日进度，裁定2）/ L3 进度缺口贡献 Top5·组织维度（裁定3）/
+// L4 相关经营事件（target_gap 真实事件，0 条如实显空，绝不前端造）/ L5 月度明细（当月差额=
+// MTD 同口径进度差额，裁定4）。「让AI分析目标差距」只注真实值、annual 降级即禁用（裁定5）；
+// 删 Ring/GapFacts/组织缺口拆解表；载荷中的预测类字段与同比列留而未读（零预测
+// 红线：所有线止于当月，不延伸不补值）。
 import { useEffect, useState } from "react";
-import { apiInsightTargetOverview } from "../../api";
-import type { TargetAnnual, TargetDegraded, TargetOverview } from "../../types";
+import { apiInsightActiveEvents, apiInsightTargetOverview } from "../../api";
+import type {
+  InsightActiveEvent, TargetAnnual, TargetCenterRow, TargetDegraded, TargetMonthRow, TargetOverview,
+} from "../../types";
 import AppShell from "../cockpit/AppShell";
 import PageHeader from "../cockpit/PageHeader";
 import SectionCard from "../cockpit/SectionCard";
-import Ring from "../cockpit/Ring";
+import KpiCard from "../cockpit/KpiCard";
+import StatusTag, { type Tone } from "../cockpit/StatusTag";
+import PrimaryButton from "../cockpit/PrimaryButton";
 import DegradedLine from "../cockpit/DegradedLine";
+import EmptyState from "../cockpit/EmptyState";
+import { fmtWanSmart } from "./fmt";
 
 const isDegraded = (x: TargetOverview["annual"] | TargetOverview["months"] | TargetOverview["centers"]): x is TargetDegraded =>
   !Array.isArray(x) && typeof x === "object" && x !== null && (x as TargetDegraded).available === false;
 
-const fmtWan = (n: number | null) => (n == null ? "—" : n.toLocaleString());
 const fmtPct = (n: number | null) => (n == null ? "—" : `${n}%`);
 
-/** P4 事实卡（占原预测卡槽位）：只做载荷值的确定性算术——进度偏差=达成率−时间进度、
- *  当前目标缺口=年度目标−实际完成；缺口≤0（实绩已超目标）显示"超额完成 |缺口|"，不渲染负数缺口。 */
-function GapFacts({ annual }: { annual: TargetAnnual }) {
-  const devPct = annual.achievePct - annual.timePct;
+// 事件状态文案/tone（小拷贝自 RegionBattleMapPage 同映射，避免跨页 import 耦合）
+const LIFE_LABEL: Record<string, string> = { active: "进行中", resolved: "已解除" };
+const ATTR_LABEL: Record<string, string> = { pending: "待分析", running: "分析中", done: "分析完成", degraded: "降级完成", failed: "分析失败" };
+const ATTR_TONE: Record<string, Tone> = { pending: "neutral", running: "info", done: "success", degraded: "warning", failed: "danger" };
+
+/** 「让AI分析目标差距」问句（裁定5：只注真实载荷值；不规定下钻维度——六步法自选）。 */
+const buildQuestion = (annual: TargetAnnual, events: InsightActiveEvent[]) => {
+  const gapWan = annual.targetWan - annual.actualWan;
+  const ev = events.length ? ` 关联经营事件 event_id：${events.map((e) => e.event_id).join("、")}。` : "";
+  return `请分析当前年度目标完成情况。当前实际完成 ${fmtWanSmart(annual.actualWan)}，年度目标 ${fmtWanSmart(annual.targetWan)}，达成率 ${annual.achievePct}%，时间进度 ${annual.timePct}%，距年度目标 ${fmtWanSmart(gapWan)}。请按照现有六步分析法，优先识别对目标缺口贡献最大的维度，再继续下钻分析主要影响因素。${ev}`;
+};
+
+/** L1 KPI Strip（裁定1）：第 5 卡进度偏差=达成率−时间进度（确定性算术，正绿负红）；
+ *  第 6 卡距年度目标=targetWan−actualWan（>0 缺口/≤0 超额完成，P0 规则）——与 L2 终点
+ *  「当前进度缺口」是两个口径的数，各自成立不互核对。 */
+function KpiStrip({ annual }: { annual: TargetAnnual }) {
+  const dev = annual.achievePct - annual.timePct;
   const gapWan = annual.targetWan - annual.actualWan;
   return (
-    <div className="flex flex-col gap-4">
-      <div>
-        <div className="text-xs text-ck-ink-3">进度偏差</div>
-        <div className={`mt-1 text-2xl font-semibold ${devPct >= 0 ? "text-ck-success" : "text-ck-danger"}`}>
-          {devPct >= 0 ? "+" : ""}{devPct.toFixed(1)}pt
-        </div>
-        <div className="mt-1 text-[10px] text-ck-ink-3">达成率 − 时间进度</div>
-      </div>
-      <div>
-        <div className="text-xs text-ck-ink-3">当前目标缺口</div>
-        <div className={`mt-1 text-2xl font-semibold ${gapWan > 0 ? "text-ck-danger" : "text-ck-success"}`}>
-          {gapWan > 0 ? `缺口 ${gapWan.toLocaleString()} 万` : `超额完成 ${Math.abs(gapWan).toLocaleString()} 万`}
-        </div>
-      </div>
+    <div className="grid grid-cols-3 gap-3 md:grid-cols-6">
+      <KpiCard label="年度目标" value={fmtWanSmart(annual.targetWan)} />
+      <KpiCard label="实际完成" value={fmtWanSmart(annual.actualWan)} />
+      <KpiCard label="达成率" value={`${annual.achievePct}%`} />
+      <KpiCard label="时间进度" value={`${annual.timePct}%`} sub={<span title={annual.timeBasis}>{annual.timeBasis}</span>} />
+      <KpiCard
+        label="进度偏差"
+        value={`${dev >= 0 ? "+" : ""}${dev.toFixed(1)}pt`}
+        valueClassName={dev >= 0 ? "text-ck-success" : "text-ck-danger"}
+        sub="达成率 − 时间进度"
+      />
+      <KpiCard
+        label="距年度目标"
+        value={gapWan > 0 ? `缺口 ${fmtWanSmart(gapWan)}` : `超额完成 ${fmtWanSmart(Math.abs(gapWan))}`}
+        valueClassName={gapWan > 0 ? "text-ck-danger" : "text-ck-success"}
+        sub="年度目标 − 实际完成"
+      />
     </div>
   );
 }
 
-export default function TargetManagementPage() {
+/** L2 目标累计进度（裁定2 同口径）：累计目标=灰虚线（完整月整月目标 running Σ，当月点=
+ *  月目标×月工作日进度%——MTD 同口径应完成额，不拿整月目标对 MTD 实际）；累计实际=蓝实线
+ *  （当月=MTD）。终点标注「当前进度缺口」=双线共同末点差（与 KPI 距年度目标严格区分）。
+ *  双线止于当月，零预测；null 实际月断线（实际线止于前一月）。 */
+function CumulativeProgressCard({ months }: { months: TargetMonthRow[] | TargetDegraded }) {
+  if (isDegraded(months)) return <SectionCard title="目标累计进度"><DegradedLine reason={months.reason} /></SectionCard>;
+
+  const currentIdx = months.findIndex((m) => m.isCurrent);
+  const currentRow = currentIdx >= 0 ? months[currentIdx] : undefined;
+  // 当月纳入双线的条件：月工作日进度与月目标齐备；缺任一 → 双线止于最近完整月 + 当月另起说明行（不补值）
+  const currentIncluded = currentRow != null && currentRow.timePct != null && currentRow.targetWan != null;
+
+  let cumTarget = 0;
+  let cumActual = 0;
+  let actualLive = true; // null 实际月即断线：实际线止于该月前一月（后续月不续画）
+  const pts: Array<{ label: string; target: number; actual: number | null }> = [];
+  months.forEach((m, i) => {
+    if (i === currentIdx && !currentIncluded) return;
+    cumTarget += i === currentIdx ? (m.targetWan ?? 0) * ((m.timePct ?? 0) / 100) : (m.targetWan ?? 0);
+    if (m.actualWan == null) actualLive = false;
+    else if (actualLive) cumActual += m.actualWan;
+    pts.push({ label: `${Number(m.month.slice(5))}月`, target: cumTarget, actual: actualLive ? cumActual : null });
+  });
+
+  if (pts.length < 2) return <SectionCard title="目标累计进度"><EmptyState text="暂无历史目标序列" /></SectionCard>;
+
+  const lastActualIdx = pts.reduce((acc, p, i) => (p.actual != null ? i : acc), -1);
+  // 末点差在两线共同末点取（同口径对比点）
+  const gapEnd = lastActualIdx >= 0 ? pts[lastActualIdx].target - (pts[lastActualIdx].actual ?? 0) : null;
+  const W = 640, H = 230, PL = 50, PR = 14, PT = 16, PB = 26;
+  const maxV = Math.max(1, ...pts.map((p) => Math.max(p.target, p.actual ?? 0)));
+  const x = (i: number) => PL + (i * (W - PL - PR)) / (pts.length - 1);
+  const y = (v: number) => PT + (1 - v / maxV) * (H - PT - PB);
+  const annotateStart = lastActualIdx >= 0 && x(lastActualIdx) < W / 2; // 末点偏左 → 标注放右侧防溢出
+
+  return (
+    <SectionCard title="目标累计进度">
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="目标累计进度双线图">
+        {[0, maxV / 2, maxV].map((v) => (
+          <g key={v}>
+            <line x1={PL} x2={W - PR} y1={y(v)} y2={y(v)} stroke="#f1f5f9" strokeWidth={1} />
+            <text x={PL - 4} y={y(v) + 3} textAnchor="end" fontSize={9} fill="#94a3b8">{fmtWanSmart(v)}</text>
+          </g>
+        ))}
+        {pts.map((p, i) => (
+          <text key={p.label} x={x(i)} y={H - 8} textAnchor="middle" fontSize={10} fill="#94a3b8">{p.label}</text>
+        ))}
+        {lastActualIdx >= 0 && gapEnd != null && (
+          // 两线间色带：整带单色由末点状态定性（实际低于目标红染 / 反超绿染）
+          <polygon
+            points={[
+              ...pts.slice(0, lastActualIdx + 1).map((p, i) => `${x(i).toFixed(1)},${y(p.target).toFixed(1)}`),
+              ...pts.slice(0, lastActualIdx + 1).map((p, i) => `${x(i).toFixed(1)},${y(p.actual ?? 0).toFixed(1)}`).reverse(),
+            ].join(" ")}
+            fill={gapEnd > 0 ? "rgba(214,75,75,0.08)" : "rgba(14,159,110,0.08)"}
+          />
+        )}
+        <polyline
+          points={pts.map((p, i) => `${x(i).toFixed(1)},${y(p.target).toFixed(1)}`).join(" ")}
+          fill="none" stroke="#94a3b8" strokeWidth={1.6} strokeDasharray="4 3"
+        />
+        {lastActualIdx >= 1 && (
+          <polyline
+            points={pts.slice(0, lastActualIdx + 1).map((p, i) => `${x(i).toFixed(1)},${y(p.actual ?? 0).toFixed(1)}`).join(" ")}
+            fill="none" stroke="#1667d9" strokeWidth={2}
+          />
+        )}
+        {lastActualIdx >= 0 && gapEnd != null && (
+          <>
+            <circle cx={x(lastActualIdx)} cy={y(pts[lastActualIdx].actual ?? 0)} r={3} fill="#1667d9" />
+            <text
+              x={annotateStart ? x(lastActualIdx) + 7 : x(lastActualIdx) - 7}
+              y={Math.max(y(pts[lastActualIdx].actual ?? 0) - 10, PT + 10)}
+              textAnchor={annotateStart ? "start" : "end"} fontSize={11} fontWeight={600}
+              fill={gapEnd > 0 ? "#d64b4b" : "#0e9f6e"} stroke="#fff" strokeWidth={3} paintOrder="stroke"
+            >
+              {gapEnd > 0 ? `当前进度缺口 ${fmtWanSmart(gapEnd)}` : `当前进度超前 ${fmtWanSmart(Math.abs(gapEnd))}`}
+            </text>
+          </>
+        )}
+      </svg>
+      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-ck-ink-2">
+        <span className="flex items-center gap-1.5">
+          <i className="h-0 w-4 border-t-2 border-dashed" style={{ borderColor: "#94a3b8" }} />
+          累计目标（完整月整月 · 当月按月工作日进度）
+        </span>
+        <span className="flex items-center gap-1.5">
+          <i className="h-0.5 w-4 rounded-full" style={{ background: "#1667d9" }} />
+          累计实际（当月 MTD）
+        </span>
+      </div>
+      {currentRow && !currentIncluded && (
+        <div className="mt-1 text-[11px] text-ck-ink-3">
+          当月（MTD 实际 {fmtWanSmart(currentRow.actualWan)}）未接入月度时间进度，未纳入双线
+        </div>
+      )}
+    </SectionCard>
+  );
+}
+
+/** L3 进度缺口贡献 Top 5（裁定3）：直接用服务端 behindWan（目标×年日进度% − 实绩，载荷已按
+ *  behindWan 降序）取前五横条；不做 target−actual 客户端排序——那是 KPI「距年度目标」口径，
+ *  两口径不混。behindWan≤0 为超前中心，不入榜只计数。 */
+function BehindTopCard({ centers, totalBehindWan }: { centers: TargetCenterRow[] | TargetDegraded; totalBehindWan: number | null }) {
+  if (isDegraded(centers)) return <SectionCard title="进度缺口贡献 Top 5"><DegradedLine reason={centers.reason} /></SectionCard>;
+  const behind = centers.filter((c) => c.behindWan > 0);
+  const aheadCount = centers.length - behind.length;
+  return (
+    <SectionCard
+      title="进度缺口贡献 Top 5"
+      extra={<span>合计 {totalBehindWan == null ? "—" : fmtWanSmart(totalBehindWan)}</span>}
+    >
+      {behind.length === 0 ? (
+        <EmptyState text="暂无进度落后中心" />
+      ) : (
+        behind.slice(0, 5).map((c) => (
+          <div key={c.centerCode} className="flex items-center gap-3 py-1.5">
+            <span className="w-28 shrink-0 truncate text-xs font-medium text-ck-ink" title={c.centerName ?? c.centerCode}>
+              {c.centerName ?? c.centerCode}
+            </span>
+            <div className="h-3.5 min-w-0 flex-1 rounded-sm bg-ck-card-soft">
+              {/* 条宽=behindSharePct%（落后者占比分母，服务端口径），上限 100 */}
+              <div className="h-3.5 rounded-sm bg-ck-danger" style={{ width: `${Math.min(Math.max(c.behindSharePct, 0), 100)}%` }} />
+            </div>
+            <span className="w-20 shrink-0 text-right text-xs font-medium text-ck-danger">{fmtWanSmart(c.behindWan)}</span>
+          </div>
+        ))
+      )}
+      {aheadCount > 0 && <div className="mt-1 text-xs text-ck-ink-3">另有 {aheadCount} 个中心进度超前</div>}
+      <p
+        className="mt-1.5 text-xs text-ck-ink-3"
+        title="behindWan = 目标 × 年日进度% − 实绩（服务端计算，年日自然日口径）；目标主数据暂只有组织（运营中心）维度"
+      >
+        口径：目标 × 年日进度 − 实绩 · 组织维度（区域/渠道/产品维度目标未接入）
+      </p>
+    </SectionCard>
+  );
+}
+
+/** L4 相关经营事件：active 事件客户端过滤 event_type==="target_gap"（真实事件），≤3 条；
+ *  0 条如实显空——绝不前端造事件。 */
+function TargetEventsCard({ events, onOpenEvent }: { events: InsightActiveEvent[]; onOpenEvent: (id: string) => void }) {
+  return (
+    <SectionCard title="相关经营事件" extra={`${events.length} 条`}>
+      {events.length === 0 ? (
+        <div className="py-6 text-center text-xs text-ck-ink-3">当前暂无目标偏差经营事件</div>
+      ) : (
+        events.slice(0, 3).map((e) => (
+          <div key={e.event_id} className="border-b border-ck-line/60 py-2 first:pt-0 last:border-0 last:pb-0">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <StatusTag tone={e.severity === "major" ? "danger" : "warning"} size="sm">
+                {e.severity === "major" ? "重大" : "一般"}
+              </StatusTag>
+              <button
+                type="button"
+                className="min-w-0 flex-1 truncate text-left text-xs font-medium text-ck-primary hover:underline"
+                title={e.title}
+                onClick={() => onOpenEvent(e.event_id)}
+              >
+                {e.title}
+              </button>
+              <span className="shrink-0 text-[10px] text-ck-ink-3">持续第 {e.persist_days} 天</span>
+            </div>
+            <div className="mt-1 flex min-w-0 items-center gap-1.5">
+              {LIFE_LABEL[e.lifecycle] != null && (
+                <StatusTag tone={e.lifecycle === "resolved" ? "success" : "info"} dot size="sm">{LIFE_LABEL[e.lifecycle]}</StatusTag>
+              )}
+              {ATTR_LABEL[e.attribution_status] != null && (
+                <StatusTag tone={ATTR_TONE[e.attribution_status] ?? "neutral"} size="sm">{ATTR_LABEL[e.attribution_status]}</StatusTag>
+              )}
+              {e.summary && (
+                <span className="min-w-0 flex-1 truncate text-[11px] text-ck-ink-3" title={e.summary}>{e.summary.split("\n")[0]}</span>
+              )}
+            </div>
+          </div>
+        ))
+      )}
+    </SectionCard>
+  );
+}
+
+/** L5 月度达成明细（裁定4）：差额两口径——完整月=实际−整月目标；当月=MTD 实际−月目标×
+ *  月工作日进度（同口径，绝不拿 MTD 对整月目标冒充落后），带「进度」角标+title 注口径；
+ *  当月 timePct 缺失 → 差额「—」。状态：完整月 领先/落后/—；当月 进行中+MTD 时间进度。 */
+function MonthTable({ months }: { months: TargetMonthRow[] | TargetDegraded }) {
+  if (isDegraded(months))
+    return (
+      <SectionCard padding="none" title="月度达成（明细）">
+        <DegradedLine reason={months.reason} />
+      </SectionCard>
+    );
+  return (
+    <SectionCard padding="none" title="月度达成（明细）">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="border-b border-ck-line text-left text-ck-ink-3">
+            {["月份", "月度目标", "月度实际", "达成率", "差额", "状态"].map((h) => (
+              <th key={h} className="whitespace-nowrap px-4 py-2 font-normal">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {months.length === 0 ? (
+            <tr>
+              <td colSpan={6} className="px-4 py-10 text-center text-ck-ink-3">暂无目标数据</td>
+            </tr>
+          ) : (
+            months.map((m) => {
+              const diff = m.isCurrent
+                ? m.timePct != null && m.targetWan != null && m.actualWan != null
+                  ? m.actualWan - m.targetWan * (m.timePct / 100)
+                  : null
+                : m.actualWan != null && m.targetWan != null
+                  ? m.actualWan - m.targetWan
+                  : null;
+              const diffCls = diff == null ? "text-ck-ink-3" : diff >= 0 ? "text-ck-success" : "text-ck-danger";
+              return (
+                <tr key={m.month} className={`border-b border-ck-line/60 last:border-0 ${m.isCurrent ? "bg-ck-primary-soft/40" : ""}`}>
+                  <td className="whitespace-nowrap px-4 py-2 text-ck-ink-2">{Number(m.month.slice(5))} 月</td>
+                  <td className="whitespace-nowrap px-4 py-2 text-ck-ink-2">{fmtWanSmart(m.targetWan)}</td>
+                  <td className="whitespace-nowrap px-4 py-2 text-ck-ink">{fmtWanSmart(m.actualWan)}</td>
+                  <td className="whitespace-nowrap px-4 py-2 text-ck-ink-2">{fmtPct(m.achievePct)}</td>
+                  <td className="whitespace-nowrap px-4 py-2">
+                    {m.isCurrent && diff != null ? (
+                      <span className={diffCls} title="当月差额=MTD实际−月目标×月工作日进度（同口径）">
+                        {fmtWanSmart(diff)}
+                        <sup className="ml-0.5 text-[9px] font-normal text-ck-ink-3">进度</sup>
+                      </span>
+                    ) : (
+                      <span className={diffCls}>{fmtWanSmart(diff)}</span>
+                    )}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-2">
+                    {m.isCurrent ? (
+                      <span className="text-ck-primary">
+                        进行中
+                        {m.timePct != null && <span className="ml-1.5 text-[10px] text-ck-ink-3">MTD 时间进度 {m.timePct}%</span>}
+                      </span>
+                    ) : m.actualWan == null || m.targetWan == null ? (
+                      <span className="text-ck-ink-3">—</span>
+                    ) : m.actualWan >= m.targetWan ? (
+                      <span className="text-ck-success">领先</span>
+                    ) : (
+                      <span className="text-ck-danger">落后</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })
+          )}
+        </tbody>
+      </table>
+    </SectionCard>
+  );
+}
+
+export default function TargetManagementPage({ onOpenEvent, onAsk }: {
+  onOpenEvent: (id: string) => void;
+  onAsk: (question: string) => void;
+}) {
   const [data, setData] = useState<TargetOverview | null>(null);
+  const [events, setEvents] = useState<InsightActiveEvent[]>([]);
   const [err, setErr] = useState<string | null>(null);
+
   useEffect(() => {
     apiInsightTargetOverview().then(setData).catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+    // L4：target_gap 真实事件（active 池客户端过滤）；失败=空 → 如实显暂无
+    apiInsightActiveEvents()
+      .then((r) => setEvents(r.events.filter((e) => e.event_type === "target_gap")))
+      .catch(() => setEvents([]));
   }, []);
+
   if (err && !data)
     return (
       <AppShell>
@@ -59,152 +346,39 @@ export default function TargetManagementPage() {
         </div>
       </AppShell>
     );
+
+  const annual = data != null && !isDegraded(data.annual) ? data.annual : null;
+
   return (
     <AppShell>
-      <PageHeader title="目标管理" subtitle={data ? `${data.year} 年 · 数据日 ${data.asOf}` : "加载中…"} />
+      <PageHeader
+        title="目标管理"
+        subtitle={data ? `${data.year} 年 · 数据日 ${data.asOf}` : "加载中…"}
+        meta={
+          <PrimaryButton
+            size="sm"
+            disabled={annual == null}
+            title={annual == null ? "数据未就绪" : undefined}
+            onClick={annual != null ? () => onAsk(buildQuestion(annual, events)) : undefined}
+          >
+            让AI分析目标差距
+          </PrimaryButton>
+        }
+      />
       {!data ? (
         <div className="py-6 text-sm text-ck-ink-3">加载中…</div>
       ) : (
         <>
-          <div className="grid gap-5 md:grid-cols-2">
-            <SectionCard title="年度目标进度">
-              {isDegraded(data.annual) ? (
-                <DegradedLine reason={data.annual.reason} />
-              ) : (
-                <div className="flex items-center gap-6">
-                  <Ring value={data.annual.achievePct} className="h-28 w-28 shrink-0">
-                    <div className="flex flex-col items-center justify-center">
-                      <span className="text-2xl font-semibold text-ck-ink">{data.annual.achievePct}%</span>
-                      <span className="text-[10px] text-ck-ink-3">达成率</span>
-                    </div>
-                  </Ring>
-                  <div className="text-xs leading-relaxed text-ck-ink-2">
-                    <div>
-                      实际 <span className="font-medium text-ck-ink">{data.annual.actualWan.toLocaleString()} 万</span>
-                    </div>
-                    <div>
-                      年度目标 <span className="font-medium text-ck-ink">{data.annual.targetWan.toLocaleString()} 万</span>
-                    </div>
-                    <div>
-                      时间进度 <span className="font-medium text-ck-ink">{data.annual.timePct}%</span>
-                    </div>
-                    <div className="mt-1.5 text-[10px] text-ck-ink-3">{data.annual.timeBasis}</div>
-                  </div>
-                </div>
-              )}
-            </SectionCard>
-            <SectionCard title="进度与缺口">
-              {isDegraded(data.annual) ? <DegradedLine reason={data.annual.reason} /> : <GapFacts annual={data.annual} />}
-            </SectionCard>
-          </div>
-
-          <SectionCard padding="none" title="月度达成">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-ck-line text-left text-ck-ink-3">
-                  {["月份", "实际（万）", "目标（万）", "达成率", "同比", "状态"].map((h) => (
-                    <th key={h} className="whitespace-nowrap px-4 py-2 font-normal">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {isDegraded(data.months) ? (
-                  <tr>
-                    <td colSpan={6} className="px-4 py-6 text-xs text-ck-ink-3">{data.months.reason}</td>
-                  </tr>
-                ) : data.months.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="px-4 py-10 text-center text-ck-ink-3">暂无目标数据</td>
-                  </tr>
-                ) : (
-                  data.months.map((m) => (
-                    <tr key={m.month} className={`border-b border-ck-line/60 last:border-0 ${m.isCurrent ? "bg-ck-primary-soft/40" : ""}`}>
-                      <td className="whitespace-nowrap px-4 py-2 text-ck-ink-2">{Number(m.month.slice(5))} 月</td>
-                      <td className="whitespace-nowrap px-4 py-2 text-ck-ink">{fmtWan(m.actualWan)}</td>
-                      <td className="whitespace-nowrap px-4 py-2 text-ck-ink-2">{fmtWan(m.targetWan)}</td>
-                      <td className="whitespace-nowrap px-4 py-2 text-ck-ink-2">{fmtPct(m.achievePct)}</td>
-                      <td className="whitespace-nowrap px-4 py-2 text-ck-ink-2">
-                        {m.yoyPct == null ? "—" : `${m.yoyPct > 0 ? "+" : ""}${m.yoyPct}%`}
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-2">
-                        {m.isCurrent ? (
-                          <span className="text-ck-primary">
-                            进行中
-                            {m.timePct != null && <span className="ml-1.5 text-[10px] text-ck-ink-3">时间进度 {m.timePct}%</span>}
-                          </span>
-                        ) : (
-                          <span className="text-ck-ink-3">完成</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </SectionCard>
-
-          <SectionCard padding="none" title="组织缺口拆解">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-ck-line text-left text-ck-ink-3">
-                  {["中心", "实际（万）", "目标（万）", "达成率", "时间进度", "欠进度额（万）"].map((h) => (
-                    <th key={h} className="whitespace-nowrap px-4 py-2 font-normal">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {isDegraded(data.centers) ? (
-                  <tr>
-                    <td colSpan={6} className="px-4 py-6 text-xs text-ck-ink-3">{data.centers.reason}</td>
-                  </tr>
-                ) : data.centers.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="px-4 py-10 text-center text-ck-ink-3">暂无目标数据</td>
-                  </tr>
-                ) : (
-                  <>
-                    <tr className="border-b border-ck-line bg-ck-card-soft text-ck-ink-2">
-                      <td colSpan={5} className="px-4 py-1.5 text-right">欠进度合计</td>
-                      <td className="whitespace-nowrap px-4 py-1.5 font-medium">
-                        {data.centersTotalBehindWan == null ? (
-                          "—"
-                        ) : (
-                          <span className="text-ck-danger">{data.centersTotalBehindWan.toLocaleString()} 万</span>
-                        )}
-                      </td>
-                    </tr>
-                    {data.centers.map((c) => (
-                      <tr key={c.centerCode} className="border-b border-ck-line/60 last:border-0 hover:bg-ck-card-soft">
-                        <td className="max-w-44 truncate px-4 py-2.5 font-medium text-ck-ink" title={c.centerName ?? c.centerCode}>
-                          {c.centerName ?? c.centerCode}
-                        </td>
-                        <td className="whitespace-nowrap px-4 py-2 text-ck-ink">{c.actualWan.toLocaleString()}</td>
-                        <td className="whitespace-nowrap px-4 py-2 text-ck-ink-2">{c.targetWan.toLocaleString()}</td>
-                        <td className="whitespace-nowrap px-4 py-2 text-ck-ink-2">{fmtPct(c.achievePct)}</td>
-                        <td className="whitespace-nowrap px-4 py-2 text-ck-ink-2">{c.timePct}%</td>
-                        <td className="whitespace-nowrap px-4 py-2">
-                          {c.behindWan > 0 ? (
-                            <span className="text-ck-danger">+{c.behindWan.toLocaleString()}</span>
-                          ) : c.behindWan < 0 ? (
-                            <span className="text-ck-success">超前 {Math.abs(c.behindWan).toLocaleString()}</span>
-                          ) : (
-                            <span className="text-ck-ink-3">0</span>
-                          )}
-                          {/* 行内水平条：宽=behindSharePct%（占比分母只计落后者，服务端口径） */}
-                          <div className="mt-1 h-1.5 w-24 rounded bg-ck-card-soft">
-                            <div
-                              className="h-1.5 rounded bg-red-500"
-                              style={{ width: `${Math.min(Math.max(c.behindSharePct, 0), 100)}%` }}
-                            />
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </>
-                )}
-              </tbody>
-            </table>
-          </SectionCard>
+          {/* L1：annual 降级 → 整排降级行 */}
+          {isDegraded(data.annual) ? <DegradedLine reason={data.annual.reason} /> : annual != null && <KpiStrip annual={annual} />}
+          {/* L2 */}
+          <CumulativeProgressCard months={data.months} />
+          {/* L3 */}
+          <BehindTopCard centers={data.centers} totalBehindWan={data.centersTotalBehindWan} />
+          {/* L4 */}
+          <TargetEventsCard events={events} onOpenEvent={onOpenEvent} />
+          {/* L5 */}
+          <MonthTable months={data.months} />
         </>
       )}
     </AppShell>
