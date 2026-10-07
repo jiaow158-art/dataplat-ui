@@ -1,7 +1,9 @@
 // M-i6 经营事件中心（spec 2026-09-30）：统计口径全由 /events?state=all 服务端返回（D-e5），
 // 前端只做筛选（客户端，v1 量级几十行）与展示。三概念分立（D-e2）：lifecycle/attribution_status
 // 同格两层竖排各自独立；late 仅标题 Badge。
+// P1-4 问题总控台化：态势五卡 / 两层筛选（裁定3）/ 近30天经营摘要（裁定4/5）/ 字段排序（§十四）。
 import { useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import { ApiError, apiInsightEventCenter, apiInsightFollowup } from "../../api";
 import type { EventCenterEvent, EventCenterPayload } from "../../types";
 import AppShell from "../cockpit/AppShell";
@@ -32,6 +34,18 @@ function DeltaTag({ d, positiveIsGood }: { d: number | null; positiveIsGood: boo
   );
 }
 
+// ── P1-4 ──
+// 裁定3 快捷状态分段：majorActive 固定语义=active∧major（与 KPI「重大异常」卡同口径）
+type QuickMode = "全部" | "active" | "resolved" | "majorActive";
+const QUICK_KEYS: QuickMode[] = ["全部", "active", "resolved", "majorActive"];
+const QUICK_LABEL: Record<QuickMode, string> = { "全部": "全部", active: "进行中", resolved: "已解除", majorActive: "重大异常" };
+// §十四 排序：recent=服务端序（first_seen_date DESC）不重排；longest=persist_days 字段序（非经营优先级）
+type SortMode = "recent" | "longest";
+const SORT_LABEL: Record<SortMode, string> = { recent: "最近发现", longest: "持续最久" };
+/** 分段/排序 pill：样式对齐既有 tab pill（RegionBattleMapPage） */
+const pillCls = (on: boolean) =>
+  `rounded px-2 py-0.5 text-[11px] transition-colors ${on ? "bg-ck-primary-soft font-medium text-ck-primary" : "text-ck-ink-3 hover:text-ck-ink-2"}`;
+
 export default function EventCenterPage({
   onOpenEvent, onFollowed,
 }: { onOpenEvent: (id: string) => void; onFollowed: (r: { uiSessionId: string; seedQuestion: string }) => void }) {
@@ -47,32 +61,48 @@ export default function EventCenterPage({
   const [lateOnly, setLateOnly] = useState(false);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  // 裁定3 两层筛选：L1 快捷状态分段常显；L2「更多筛选」默认收起（高级层允许自由 life×sev 组合）
+  const [quick, setQuick] = useState<QuickMode>("全部");
+  const [moreOpen, setMoreOpen] = useState(false);
+  // §十四 表格排序 toggle（纯字段序，非经营优先级）
+  const [sortMode, setSortMode] = useState<SortMode>("recent");
   const [followBusy, setFollowBusy] = useState<string | null>(null);
   useEffect(() => {
     apiInsightEventCenter().then(setData).catch((e) => setErr(e instanceof Error ? e.message : String(e)));
   }, []);
   const orgs = useMemo(() => ["全部", ...new Set((data?.events ?? []).map((e) => e.org).filter((x): x is string => !!x))], [data]);
-  const filtered = useMemo(() => (data?.events ?? []).filter((e) => {
-    if (sev !== "全部" && e.severity !== sev) return false;
-    if (etype !== "全部" && e.event_type !== etype) return false;
-    if (life !== "全部" && e.lifecycle !== life) return false;
-    if (attr !== "全部" && e.attribution_status !== attr) return false;
-    if (org !== "全部" && e.org !== org) return false;
-    if (lateOnly && !e.late) return false;
-    if (from && e.first_seen_date < from) return false;
-    if (to && e.first_seen_date > to) return false;
-    if (q.trim()) {
-      const hay = `${e.title} ${e.org ?? ""} ${e.channel ?? ""} ${TYPE_LABEL[e.event_type] ?? ""}`;
-      if (!hay.includes(q.trim())) return false;
-    }
-    return true;
-  }), [data, q, sev, etype, life, attr, org, lateOnly, from, to]);
+  const filtered = useMemo(() => {
+    // 裁定3：快捷分段驱动 life/sev（不与 L2 选择双重叠加）；quick=全部 时 L2 life/sev 照常生效
+    const lifeEff = quick === "active" || quick === "majorActive" ? "active" : quick === "resolved" ? "resolved" : life;
+    const sevEff = quick === "majorActive" ? "major" : sev;
+    return (data?.events ?? []).filter((e) => {
+      if (sevEff !== "全部" && e.severity !== sevEff) return false;
+      if (etype !== "全部" && e.event_type !== etype) return false;
+      if (lifeEff !== "全部" && e.lifecycle !== lifeEff) return false;
+      if (attr !== "全部" && e.attribution_status !== attr) return false;
+      if (org !== "全部" && e.org !== org) return false;
+      if (lateOnly && !e.late) return false;
+      if (from && e.first_seen_date < from) return false;
+      if (to && e.first_seen_date > to) return false;
+      if (q.trim()) {
+        const hay = `${e.title} ${e.org ?? ""} ${e.channel ?? ""} ${TYPE_LABEL[e.event_type] ?? ""}`;
+        if (!hay.includes(q.trim())) return false;
+      }
+      return true;
+    });
+  }, [data, q, sev, etype, life, attr, org, lateOnly, from, to, quick]);
+  // §十四：recent=服务端序（最近发现）不重排；longest=persist_days desc、first_seen desc tie-break
+  const rows = useMemo(() => {
+    if (sortMode === "recent") return filtered;
+    return [...filtered].sort((a, b) => b.persist_days - a.persist_days || (b.first_seen_date ?? "").localeCompare(a.first_seen_date ?? ""));
+  }, [filtered, sortMode]);
 
-  // 下拉筛选：值=原始 key、展示=查 label map（区域例外——选项本身就是展示文案）
+  // 下拉筛选（L2）：值=原始 key、展示=查 label map（区域例外——选项本身就是展示文案）。
+  // 裁定3 单向同步：L2 改动 life/sev 时快捷分段回「全部」，避免双源打架
   const selects: Array<{ label: string; val: string; set: (v: string) => void; opts: string[]; labels: Record<string, string> }> = [
-    { label: "严重程度", val: sev, set: setSev, opts: ["全部", "major", "minor"], labels: SEV_LABEL },
+    { label: "严重程度", val: sev, set: (v) => { setSev(v); setQuick("全部"); }, opts: ["全部", "major", "minor"], labels: SEV_LABEL },
     { label: "事件类型", val: etype, set: setEtype, opts: ["全部", ...Object.keys(TYPE_LABEL)], labels: TYPE_LABEL },
-    { label: "事件状态", val: life, set: setLife, opts: ["全部", "active", "resolved"], labels: LIFE_LABEL },
+    { label: "事件状态", val: life, set: (v) => { setLife(v); setQuick("全部"); }, opts: ["全部", "active", "resolved"], labels: LIFE_LABEL },
     { label: "AI分析状态", val: attr, set: setAttr, opts: ["全部", ...Object.keys(ATTR_LABEL)], labels: ATTR_LABEL },
   ];
 
@@ -95,50 +125,90 @@ export default function EventCenterPage({
       </AppShell>
     );
   }
-  const cards = data ? [
-    { label: "全部事件", card: data.summary.total, good: false },
-    { label: "重大异常", card: data.summary.major, good: false },
-    { label: "一般异常", card: data.summary.minor, good: false },
-    { label: "目标偏差", card: data.summary.targetGap, good: false },
-    { label: "已解除", card: data.summary.resolved, good: true },
+  // 态势五卡（§三）：active/resolved 取服务端 lifecycleDistribution（全量口径）；其余为客户端
+  // 确定性算术——capped=data.truncated 时逐卡注明（裁定1）；近7日窗口锚定 asOf，非自然日今天（裁定2）
+  const evts = data?.events ?? [];
+  const capped = data?.truncated ?? false;
+  const activeN = data?.lifecycleDistribution.find((d) => d.key === "active")?.count ?? 0;
+  const resolvedN = data?.lifecycleDistribution.find((d) => d.key === "resolved")?.count ?? 0;
+  const majorActive = evts.filter((e) => e.lifecycle === "active" && e.severity === "major").length;
+  const cutoff7 = data ? new Date(Date.parse(data.asOf) - 6 * 86400e3).toISOString().slice(0, 10) : "";
+  const last7 = cutoff7 ? evts.filter((e) => e.first_seen_date && e.first_seen_date >= cutoff7).length : 0;
+  const dayN = data ? evts.filter((e) => e.first_seen_date === data.asOf).length : 0;
+  // 持续最久＝进行中事件 persist_days 极值（极值事实，不造阈值）
+  const longest = evts.reduce<{ days: number; title: string | null }>(
+    (best, e) => (e.lifecycle === "active" && e.persist_days > best.days ? { days: e.persist_days, title: e.title } : best),
+    { days: 0, title: null },
+  );
+  const kpis = data ? [
+    { label: "进行中", value: activeN, sub: "全量生命周期口径" },
+    { label: "重大异常", value: majorActive, sub: `当前进行中${capped ? " · 基于最近500条" : ""}` },
+    { label: "近7日新增", value: last7, sub: `${data.asOf.slice(5)} 当日新增 +${dayN}` },
+    { label: "持续最久", value: `${longest.days} 天`, sub: <span className="line-clamp-2" title={longest.title ?? undefined}>{longest.title ?? "暂无进行中事件"}{capped ? " · 基于最近500条" : ""}</span> },
+    { label: "已解除", value: resolvedN, sub: `近30日解除 ${data.summary.resolved.count} 条` },
   ] : [];
   return (
     <AppShell>
       <PageHeader title="经营事件中心" subtitle={`查看全部经营事件、状态与进展${data ? ` · 数据日 ${data.asOf}` : ""}`} />
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-        {cards.map(({ label, card, good }) => (
-          <KpiCard key={label} label={label} value={card.count} sub={<DeltaTag d={card.delta} positiveIsGood={good} />} />
+        {kpis.map((k) => (
+          <KpiCard key={k.label} label={k.label} value={k.value} sub={k.sub} />
         ))}
         {!data && <div className="col-span-2 py-6 text-center text-sm text-ck-ink-3 md:col-span-5">加载中…</div>}
       </div>
+      {/* 裁定1：截断时统一提示——客户端统计基于已加载的最近 500 条，服务端口径照常展示 */}
+      {data?.truncated && <div className="text-[11px] text-ck-warning">部分统计基于最近 500 条已加载事件</div>}
       <FilterBar count={`${filtered.length} 条`}>
+        {/* L1 常显（裁定3）：搜索 / 日期 / 快捷状态分段 / 更多筛选 */}
         <input className={`min-w-48 flex-1 ${filterControlClass}`} placeholder="搜索标题 / 组织 / 渠道 / 事件类型" value={q} onChange={(e) => setQ(e.target.value)} />
         <input type="date" className={filterControlClass} value={from} onChange={(e) => setFrom(e.target.value)} />
         <span className="text-ck-ink-3">~</span>
         <input type="date" className={filterControlClass} value={to} onChange={(e) => setTo(e.target.value)} />
-        {selects.map(({ label, val, set, opts, labels }) => (
-          <label key={label} className="flex items-center gap-1 text-ck-ink-3">
-            {label}
-            <select className={filterControlClass} value={val} onChange={(e) => set(e.target.value)}>
-              {opts.map((o) => <option key={o} value={o}>{o === "全部" ? "全部" : (labels[o] ?? o)}</option>)}
-            </select>
-          </label>
-        ))}
-        <label className="flex items-center gap-1 text-ck-ink-3">
-          区域
-          <select className={filterControlClass} value={org} onChange={(e) => setOrg(e.target.value)}>
-            {orgs.map((o) => <option key={o} value={o}>{o}</option>)}
-          </select>
-        </label>
-        <label className="flex items-center gap-1 text-ck-ink-3">
-          <input type="checkbox" checked={lateOnly} onChange={(e) => setLateOnly(e.target.checked)} /> 晚到
-        </label>
+        <div className="flex items-center gap-0.5">
+          {QUICK_KEYS.map((k) => (
+            <button key={k} type="button" className={pillCls(quick === k)} onClick={() => setQuick(k)}>{QUICK_LABEL[k]}</button>
+          ))}
+        </div>
+        <button type="button" className={filterControlClass} onClick={() => setMoreOpen((v) => !v)}>更多筛选 {moreOpen ? "⌃" : "⌄"}</button>
+        {/* L2 折叠（默认收起）：严重程度/事件类型/事件状态/AI分析状态 + 区域 + 晚到；允许自由 life×sev 组合（裁定3） */}
+        {moreOpen && (
+          <div className="mt-1 flex w-full flex-wrap items-center gap-2 border-t border-ck-line pt-2">
+            {selects.map(({ label, val, set, opts, labels }) => (
+              <label key={label} className="flex items-center gap-1 text-ck-ink-3">
+                {label}
+                <select className={filterControlClass} value={val} onChange={(e) => set(e.target.value)}>
+                  {opts.map((o) => <option key={o} value={o}>{o === "全部" ? "全部" : (labels[o] ?? o)}</option>)}
+                </select>
+              </label>
+            ))}
+            <label className="flex items-center gap-1 text-ck-ink-3">
+              区域
+              <select className={filterControlClass} value={org} onChange={(e) => setOrg(e.target.value)}>
+                {orgs.map((o) => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </label>
+            <label className="flex items-center gap-1 text-ck-ink-3">
+              <input type="checkbox" checked={lateOnly} onChange={(e) => setLateOnly(e.target.checked)} /> 晚到
+            </label>
+          </div>
+        )}
       </FilterBar>
       {/* P6 七列表（1366 无横滚）：1366−256 侧栏−2×32(lg:px-8)≈1046、再扣滚动条≈1030 内容宽；
           事件 30%≈310px 两行 line-clamp 足够；操作 10%≈103px 竖排 h-7 按钮+文字链足够 */}
       <div className="flex flex-col gap-5 xl:flex-row">
         <div className="flex min-w-0 flex-1 flex-col gap-4">
-          <SectionCard padding="none">
+          <SectionCard
+            padding="none"
+            title="事件清单"
+            extra={(
+              // §十四 字段排序（非经营优先级）：默认=服务端最近发现序
+              <div className="flex items-center gap-1" title="字段排序（非经营优先级）">
+                {(["recent", "longest"] as SortMode[]).map((m) => (
+                  <button key={m} type="button" className={pillCls(sortMode === m)} onClick={() => setSortMode(m)}>{SORT_LABEL[m]}</button>
+                ))}
+              </div>
+            )}
+          >
             <table className="w-full table-fixed text-xs">
               <colgroup>
                 <col style={{ width: "30%" }} />
@@ -155,8 +225,8 @@ export default function EventCenterPage({
                 </tr>
               </thead>
               <tbody>
-                {filtered.length === 0 && <tr><td colSpan={7}><EmptyState text={!data ? "…" : data.events.length === 0 ? "暂无经营事件" : "暂无匹配事件"} /></td></tr>}
-                {filtered.map((e) => (
+                {rows.length === 0 && <tr><td colSpan={7}><EmptyState text={!data ? "…" : data.events.length === 0 ? "暂无经营事件" : "暂无匹配事件"} /></td></tr>}
+                {rows.map((e) => (
                   <tr key={e.event_id} className="border-b border-ck-line/60 last:border-0 hover:bg-ck-card-soft">
                     {/* 事件两行：标题（两行截断，保可读性）+晚到 badge；次行 类型·首次发现 MM-DD */}
                     <td className="px-3 py-2.5 align-top">
@@ -179,19 +249,22 @@ export default function EventCenterPage({
                     <td className="px-3 py-2.5 align-top">
                       <div className="truncate text-ck-ink-2" title={e.org ?? undefined}>{e.org ?? "—"}</div>
                     </td>
-                    <td className="whitespace-nowrap px-3 py-2.5 align-top text-ck-ink-3">{e.persist_days} 天</td>
+                    {/* 持续天数＝首次发现至今；只加粗不着色（§六裁定：无业务阈值，禁红黄绿） */}
+                    <td className="whitespace-nowrap px-3 py-2.5 align-top text-ck-ink-3">
+                      <span className="font-medium text-ck-ink" title="持续天数＝首次发现至今">{e.persist_days}</span> 天
+                    </td>
                     {/* 当前状态两层：生命周期 + AI分析，各自独立（D-e2） */}
                     <td className="px-3 py-2.5 align-top">
                       <div className="flex flex-col items-start gap-1">
                         <StatusTag tone={e.lifecycle === "active" ? "info" : "success"} dot size="sm">{e.lifecycle === "active" ? "进行中" : "已解除"}</StatusTag>
-                        <StatusTag tone={ATTR_TONE[e.attribution_status] ?? "neutral"} size="sm">{ATTR_LABEL[e.attribution_status] ?? e.attribution_status}</StatusTag>
+                        <StatusTag tone={ATTR_TONE[e.attribution_status] ?? "neutral"} size="sm">AI · {ATTR_LABEL[e.attribution_status] ?? e.attribution_status}</StatusTag>
                       </div>
                     </td>
                     <td className="px-3 py-2.5 align-top">
                       <div className="flex flex-col items-start gap-1">
-                        <PrimaryButton size="sm" onClick={() => onOpenEvent(e.event_id)}>查看详情</PrimaryButton>
+                        <PrimaryButton size="sm" className="whitespace-nowrap" onClick={() => onOpenEvent(e.event_id)}>查看详情</PrimaryButton>
                         <button type="button" className="text-left text-ck-primary hover:underline disabled:pointer-events-none disabled:text-ck-ink-3" disabled={followBusy === e.event_id} onClick={() => void follow(e.event_id)}>
-                          {followBusy === e.event_id ? "分析中…" : "继续分析"}
+                          {followBusy === e.event_id ? "分析中…" : "继续分析 →"}
                         </button>
                       </div>
                     </td>
@@ -201,14 +274,14 @@ export default function EventCenterPage({
             </table>
           </SectionCard>
           {data?.truncated && <div className="text-[11px] text-ck-warning">事件超过 500 条已截断显示——请联系管理员调整</div>}
-          <SectionCard title="近期事件动态">
+          <SectionCard title="事件动态">
             <div className="max-h-72 overflow-y-auto">
               {data ? <ActivityTimeline events={data.events} onOpenEvent={onOpenEvent} /> : <div className="p-4 text-sm text-ck-ink-3">加载中…</div>}
             </div>
           </SectionCard>
         </div>
         <div className="flex w-full flex-col gap-5 xl:w-80 xl:shrink-0">
-          {data && <TrendSummaryCard data={data} />}
+          {data && <OperatingSummaryCard data={data} />}
           {data && <EventDonutCard title="事件类型分布" items={data.eventTypeDistribution} total={data.events.length} />}
           {data && <EventDonutCard title="事件生命周期分布" items={data.lifecycleDistribution} total={data.events.length} palette={["#2563eb", "#10b981"]} />}
         </div>
@@ -218,28 +291,34 @@ export default function EventCenterPage({
   );
 }
 
-/** U4 低样本不画折线：右栏首卡改「近 30 天摘要」KpiCard（口径全在服务端，这里只取值展示）。 */
-function TrendSummaryCard({ data }: { data: EventCenterPayload }) {
-  // 集中日=近 30 天新发 total 最大的点（并列取最新日期）；全零 → 无集中日
-  const peak = data.trend.points.reduce<{ date: string; total: number } | null>((best, p) => {
-    if (p.total <= 0) return best;
-    if (!best || p.total > best.total || (p.total === best.total && p.date > best.date)) return { date: p.date, total: p.total };
-    return best;
-  }, null);
-  const d = data.summary.total.delta;
+/** 近30天经营摘要（P1-4，裁定4/5）：30日窗口指标与当前时点指标显式分标；
+ *  平均解除周期沿用既有 persist_days 口径（不重造 resolved_at−first_seen 差值，裁定4）。 */
+function OperatingSummaryCard({ data }: { data: EventCenterPayload }) {
+  const activeN = data.lifecycleDistribution.find((d) => d.key === "active")?.count ?? 0;
+  // 解除样本窗口 [asOf−29, asOf]：纯日期算术（锚定 asOf，不用 Date.now()）
+  const start = new Date(Date.parse(data.asOf) - 29 * 86400e3).toISOString().slice(0, 10);
+  const samples = data.events.filter((e) => e.resolved_at != null && e.resolved_at >= start && e.resolved_at <= data.asOf);
+  const mean = samples.length ? samples.reduce((s, e) => s + e.persist_days, 0) / samples.length : null;
   return (
-    <KpiCard
-      label="近 30 天摘要"
-      value={`新增 ${data.summary.total.count} 条`}
-      sub={
-        <>
-          集中日 {peak ? peak.date : "无集中日"} ·{" "}
-          <span className={d == null ? "" : d > 0 ? "text-ck-danger" : d < 0 ? "text-ck-success" : ""}>
-            较上期 {d == null ? "—" : `${d > 0 ? "+" : ""}${d}%`}
-          </span>
-        </>
-      }
-    />
+    <SectionCard title="近30天经营摘要">
+      <div className="grid grid-cols-2 gap-3">
+        <MiniStat label="新增（近30天）" value={`${data.summary.total.count} 条`} sub={<DeltaTag d={data.summary.total.delta} positiveIsGood={false} />} />
+        <MiniStat label="已解除（近30天）" value={`${data.summary.resolved.count} 条`} sub={<DeltaTag d={data.summary.resolved.delta} positiveIsGood />} />
+        <MiniStat label="平均解除周期（近30天）" value={mean == null ? "—" : `${mean.toFixed(1)} 天`} sub={data.truncated ? "基于最近500条" : null} />
+        {/* 裁定5：时点指标，与前三格近30天窗口口径显式区分 */}
+        <MiniStat label="当前持续（时点）" value={`${activeN} 件`} sub="时点值，区别于近30天窗口指标" />
+      </div>
+    </SectionCard>
+  );
+}
+
+function MiniStat({ label, value, sub }: { label: string; value: string; sub?: ReactNode }) {
+  return (
+    <div>
+      <div className="text-xs text-ck-ink-3">{label}</div>
+      <div className="mt-0.5 text-lg font-semibold text-ck-ink">{value}</div>
+      {sub != null && <div className="text-[10px] text-ck-ink-3">{sub}</div>}
+    </div>
   );
 }
 
@@ -259,7 +338,7 @@ const fmtActClock = (sec: number) => {
 
 /** U5 真·事件动态：只收录带时间戳的事实——发现(created_at) / 归因(attribution_generated_at，
  * 仅 done/degraded/failed) / 解除(resolved_at 日期串)；"持续第 N 天"不进时间线（表格列已有）。
- * 按时间倒序取 12 条；服务端未部署新字段时条目自然缺失，不炸。 */
+ * 按时间倒序取 15 条（P1-4）；服务端未部署新字段时条目自然缺失，不炸。 */
 function ActivityTimeline({ events, onOpenEvent }: { events: EventCenterEvent[]; onOpenEvent: (id: string) => void }) {
   const items = useMemo(() => {
     const out: Array<{ t: number; kind: string; label: string; title: string; eventId: string; timeText: string }> = [];
@@ -272,7 +351,7 @@ function ActivityTimeline({ events, onOpenEvent }: { events: EventCenterEvent[];
       if (e.resolved_at)
         out.push({ t: Date.parse(e.resolved_at) / 1000, kind: "resolved", label: "已解除", title: e.title, eventId: e.event_id, timeText: e.resolved_at.slice(5, 10) });
     }
-    return out.sort((a, b) => b.t - a.t).slice(0, 12);
+    return out.sort((a, b) => b.t - a.t).slice(0, 15);
   }, [events]);
   if (!items.length) return <div className="py-6 text-center text-sm text-ck-ink-3">暂无动态</div>;
   return (
