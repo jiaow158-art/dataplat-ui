@@ -14,9 +14,11 @@ export default function OperatingDashboardPage({
 }: { onOpenEvent: (id: string) => void; onOpenEventCenter: () => void; onOpenTarget: () => void }) {
   const [daily, setDaily] = useState<InsightDaily | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   useEffect(() => {
+    setErr(null);
     apiInsightDaily().then(setDaily).catch((e) => setErr(e instanceof Error ? e.message : String(e)));
-  }, []);
+  }, [reloadKey]);
   const major = daily?.events.filter((e) => e.severity === "major").length ?? 0;
   const minor = daily?.events.filter((e) => e.severity === "minor").length ?? 0;
   const targetGap = daily?.events.filter((e) => e.eventType === "target_gap").length ?? 0; // 与 severity 芯片跨维度计数
@@ -27,6 +29,13 @@ export default function OperatingDashboardPage({
           经营洞察暂不可用，AI 问数不受影响。
           <br />
           <span className="text-xs text-ck-ink-3">{err}</span>
+          <button
+            type="button"
+            className="ml-3 rounded border border-ck-line-strong px-2.5 py-1 text-xs text-ck-ink-2 transition-colors hover:border-ck-primary hover:text-ck-ink"
+            onClick={() => setReloadKey((k) => k + 1)}
+          >
+            重试
+          </button>
         </div>
       </AppShell>
     );
