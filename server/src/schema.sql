@@ -13,10 +13,11 @@ CREATE TABLE IF NOT EXISTS sessions (   -- 登录会话（服务端可吊销；c
   expires_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_username ON sessions(username);
-CREATE TABLE IF NOT EXISTS ui_sessions ( -- UI 侧会话（标题=首问前 30 字，可重命名；网关不管理会话元数据）
+CREATE TABLE IF NOT EXISTS ui_sessions ( -- UI 侧会话（标题=展示元数据，可重命名；网关不管理会话元数据）
   id TEXT PRIMARY KEY,
   username TEXT NOT NULL,
   title TEXT NOT NULL,
+  title_source TEXT NOT NULL DEFAULT 'manual', -- default(可被自动标题覆盖)|llm|hint|manual（手动改名永久保护）
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );

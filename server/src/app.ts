@@ -37,6 +37,7 @@ import {
   type GwTaskRow,
 } from "./gw-audit.ts";
 import { insightRouter } from "./insight.ts";
+import { generateTitle } from "./title.ts";
 
 declare module "express-serve-static-core" {
   interface Request {
@@ -65,6 +66,8 @@ export interface BffConfig {
   loginRatePerMin?: number;
   /** insight-api 地址（M-i3 经营洞察代理；env INSIGHT_URL。未设置时 insight 端点 503 INSIGHT_UNAVAILABLE）。 */
   insightUrl?: string;
+  /** P4 自动标题生成器（注入点：单测传假实现；缺省真实现读 DEEPSEEK_API_KEY，未配置即静默关闭）。 */
+  titleGen?: (question: string) => Promise<string | null>;
 }
 
 const SESSION_COOKIE = "sid";
@@ -120,6 +123,10 @@ export function createApp(store: BffStore, config: BffConfig): Express {
   const loginLimiter = new SlidingWindowLimiter(config.loginRatePerMin ?? 5);
   const loginMinFailMs = config.loginMinFailMs ?? 400;
   const gateway = new GatewayClient(config.gatewayUrl, config.authToken);
+  // P4 自动标题：生成器 + 同会话 in-flight 去重（边界 3：并发 ask 下同一 default 会话至多一次在途
+  // 标题请求；完成即出队。Set 足矣，不做状态机）。
+  const titleGen = config.titleGen ?? generateTitle;
+  const titleInFlight = new Set<string>();
 
   // 探活免鉴权（对齐网关：只报 ok，无任务数据）
   app.get("/api/health", (_req, res) => {
@@ -887,7 +894,7 @@ export function createApp(store: BffStore, config: BffConfig): Express {
       }
       title = body.title.trim();
     }
-    res.status(201).json(store.createUiSession(req.user!, title));
+    res.status(201).json(store.createUiSession(req.user!, title, body.title !== undefined ? "hint" : "default"));
   });
 
   app.patch("/api/sessions/:id", (req, res) => {
@@ -961,7 +968,8 @@ export function createApp(store: BffStore, config: BffConfig): Express {
       return sendError(res, 502, "BAD_GATEWAY", "invalid gateway response");
     }
     if (!uiSessionId) {
-      uiSessionId = store.createUiSession(user, Array.from(body.question.trim()).slice(0, 30).join("")).id;
+      // P4 裁定 a：首问建会话初始「新会话」（失败/模糊不降级写前缀——宁缺毋滥）
+      uiSessionId = store.createUiSession(user, "新会话").id;
     } else {
       store.touchUiSession(uiSessionId);
     }
@@ -971,6 +979,19 @@ export function createApp(store: BffStore, config: BffConfig): Express {
       gatewaySessionId: created.session_id,
       question: body.question,
     });
+    // P4 自动标题：fire-and-forget，绝不阻塞/影响问数主流程（生成器内部全异常吞掉）。
+    // 仅 default 来源触发（manual=手动改名永久保护 / llm=已生成一次 / hint=askSeed 语义标题）；
+    // 模糊拒绝/失败 → 不落库，source 停留 default，下个有效问题再试。in-flight 去重防并发重复请求。
+    const sessNow = store.getUiSession(uiSessionId);
+    if (sessNow?.title_source === "default" && !titleInFlight.has(uiSessionId)) {
+      titleInFlight.add(uiSessionId);
+      void titleGen(body.question)
+        .then((t) => {
+          if (t) store.autoTitleUiSession(uiSessionId, t); // SQL 守卫：非 default 0 行（与手动改名并发安全）
+        })
+        .catch(() => {})
+        .finally(() => titleInFlight.delete(uiSessionId));
+    }
     res.status(201).json({ run_id: created.run_id, session_id: created.session_id, ui_session_id: uiSessionId });
   });
 

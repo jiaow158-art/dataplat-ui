@@ -137,7 +137,7 @@ export function insightRouter(store: BffStore, insightUrl: string | undefined): 
       prompt ?? "请基于以上事件背景做进一步分析。",
     ].join("\n");
     const title = (ev.title ?? eventId).slice(0, 30);
-    const uiSessionId = store.createUiSession(req.user!, title).id;
+    const uiSessionId = store.createUiSession(req.user!, title, "hint").id; // P4 裁定 c：事件标题保持现状，来源 hint（自动标题永不覆盖）
     store.insertFollowup(`fu-${randomUUID().slice(0, 12)}`, req.user!, eventId, uiSessionId, prompt);
     res.status(200).json({ uiSessionId, seedQuestion, title });
   });

@@ -379,7 +379,7 @@ function BattleCard({ block, onSelect }: { block: RegionMapRegionRow[] | RegionM
 export default function RegionBattleMapPage({ onOpenEvent, onOpenEventCenter, onAsk, focusRegion, onFocusRegionHandled }: {
   onOpenEvent: (id: string) => void;
   onOpenEventCenter: () => void;
-  onAsk: (question: string) => void;
+  onAsk: (question: string, titleHint?: string) => void; // titleHint=会话语义标题（presentation only，不进模型）
   focusRegion?: string | null; // P2-b B2：transient 聚焦意图（App 消费后清零），selectedRegion 仍归本页自持
   onFocusRegionHandled?: () => void;
 }) {
@@ -500,7 +500,7 @@ export default function RegionBattleMapPage({ onOpenEvent, onOpenEventCenter, on
                   onOpenEventCenter={onOpenEventCenter}
                   onBack={() => setSelectedRegion(null)}
                   onShowDetail={() => document.getElementById("region-drilldown")?.scrollIntoView({ behavior: "smooth", block: "start" })}
-                  onAsk={() => onAsk(buildQuestion(selectedRegion, selectedRow, selectedEvents, data.asOf))}
+                  onAsk={() => onAsk(buildQuestion(selectedRegion, selectedRow, selectedEvents, data.asOf), `${selectedRegion}经营表现分析`)}
                 />
               )}
               <RankCard block={data.regions} metric={metric} selected={selectedRegion} onSelect={toggleSelect} />

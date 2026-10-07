@@ -81,7 +81,7 @@ export const apiLogout = () => api<void>("POST", "/api/auth/logout");
 // ── UI 会话 CRUD ──────────────────────────────────────────────────────────────────
 
 export const apiListSessions = () => api<UiSession[]>("GET", "/api/sessions");
-export const apiCreateSession = () => api<UiSession>("POST", "/api/sessions", {});
+export const apiCreateSession = (title?: string) => api<UiSession>("POST", "/api/sessions", title ? { title } : {});
 export const apiRenameSession = (id: string, title: string) =>
   api<UiSession>("PATCH", `/api/sessions/${encodeURIComponent(id)}`, { title });
 export const apiDeleteSession = (id: string) =>

@@ -13,10 +13,10 @@ afterEach(async () => {
   for (const g of openGw.splice(0)) await g.close();
 });
 
-async function setup(opts: { handler?: (req: any, res: any) => void } = {}): Promise<{ bff: BffHandle; gw: MockGateway; sid: string }> {
+async function setup(opts: { handler?: (req: any, res: any) => void; titleGen?: (q: string) => Promise<string | null> } = {}): Promise<{ bff: BffHandle; gw: MockGateway; sid: string }> {
   const gw = await startMockGateway(opts.handler);
   openGw.push(gw);
-  const bff = await startBff({ gatewayUrl: gw.url });
+  const bff = await startBff({ gatewayUrl: gw.url, titleGen: opts.titleGen ?? (async () => null) }); // 缺省不出网（防真实 LLM 调用）
   openBff.push(bff);
   bff.store.upsertUser("zhang", hashPw("correct-horse-9"));
   const sid = (await login(bff.port, "zhang", "correct-horse-9")).sid!;
@@ -32,8 +32,8 @@ const gwCreateOk = (req: any, res: any): void => {
   res.end(JSON.stringify({ run_id: "run-0001", session_id: "sess-gw-1" }));
 };
 
-test("ask 无 ui_session_id：自动建 UI 会话（标题=问题前 30 字）、messages 记账、submission_id=<user>-<uuid>", async () => {
-  const { bff, gw, sid } = await setup({ handler: gwCreateOk });
+test("ask 无 ui_session_id：自动建 UI 会话（P4 起初始「新会话」）、messages 记账、submission_id=<user>-<uuid>", async () => {
+  const { bff, gw, sid } = await setup({ handler: gwCreateOk, titleGen: async () => null });
   const question = "2024年Q3瓷砖事业部库存跌价准备TOP10的物料明细和金额分布是怎样的";
   const res = await request(bff.port, "POST", "/api/ask", { cookie: `sid=${sid}`, body: { question } });
 
@@ -59,7 +59,8 @@ test("ask 无 ui_session_id：自动建 UI 会话（标题=问题前 30 字）�
   const ui = bff.store.getUiSession(res.body.ui_session_id)!;
   assert.ok(ui, "自动建 UI 会话");
   assert.equal(ui.username, "zhang");
-  assert.equal(ui.title, Array.from(question).slice(0, 30).join(""), "标题=问题前 30 字");
+  assert.equal(ui.title, "新会话", "P4 裁定 a：首问初始「新会话」，异步 LLM 标题另行落库");
+  assert.equal(ui.title_source, "default");
   const msg = bff.store.getMessageByRunId("run-0001")!;
   assert.ok(msg, "messages 记账");
   assert.equal(msg.ui_session_id, res.body.ui_session_id);

@@ -34,9 +34,14 @@ export interface UiSessionRow {
   id: string;
   username: string;
   title: string;
+  title_source: TitleSource;
   created_at: number;
   updated_at: number;
 }
+
+/** 标题来源（P4 自动标题）：title 是 presentation metadata only，绝不进入模型上下文。
+ *  default=新会话/可被自动标题覆盖；llm=已自动生成（一次性）；hint=askSeed 语义标题；manual=用户改名（永久保护）。 */
+export type TitleSource = "default" | "llm" | "hint" | "manual";
 
 export interface MessageRow {
   id: string;
@@ -185,6 +190,12 @@ export function initDb(dataDir: string): Database.Database {
   if (!userCols.some((c) => c.name === "disabled")) {
     db.exec("ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0");
   }
+  // P4 自动标题：旧库补 title_source 列——存量行随 DEFAULT settle 为 manual（历史标题永不被动改写，
+  // 保守上线：不批量重命名老会话）；新库由 schema.sql 直接带上该列，此处自然跳过。
+  const sessCols = db.prepare("PRAGMA table_info(ui_sessions)").all() as { name: string }[];
+  if (!sessCols.some((c) => c.name === "title_source")) {
+    db.exec("ALTER TABLE ui_sessions ADD COLUMN title_source TEXT NOT NULL DEFAULT 'manual'");
+  }
   return db;
 }
 
@@ -313,14 +324,21 @@ export class BffStore {
     return (user ? this.db.prepare(sql).all(user, limit) : this.db.prepare(sql).all(limit)) as LoginLogRow[];
   }
 
-  // ---------- UI 会话（spec §4：标题=首问前 30 字，可重命名） ----------
+  // ---------- UI 会话（标题=展示元数据；活动排序时间 updated_at 只随真实会话活动变化） ----------
 
-  createUiSession(username: string, title: string): UiSessionRow {
+  createUiSession(username: string, title: string, source: TitleSource = "default"): UiSessionRow {
     const ts = this.now();
-    const row: UiSessionRow = { id: `us-${randomUUID()}`, username, title, created_at: ts, updated_at: ts };
+    const row: UiSessionRow = {
+      id: `us-${randomUUID()}`,
+      username,
+      title,
+      title_source: source,
+      created_at: ts,
+      updated_at: ts,
+    };
     this.db
-      .prepare("INSERT INTO ui_sessions (id, username, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
-      .run(row.id, row.username, row.title, row.created_at, row.updated_at);
+      .prepare("INSERT INTO ui_sessions (id, username, title, title_source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(row.id, row.username, row.title, row.title_source, row.created_at, row.updated_at);
     return row;
   }
 
@@ -342,9 +360,19 @@ export class BffStore {
     return this.db.prepare("SELECT * FROM ui_sessions WHERE id = ?").get(id) as UiSessionRow | undefined;
   }
 
+  /** 用户手动改名（P4 裁定 b）：只改展示元数据——不动 updated_at（会话顺序不因 rename 跳位），
+   *  并把来源置 manual（自动标题此后永不覆盖）。 */
   renameUiSession(id: string, title: string): UiSessionRow {
-    this.db.prepare("UPDATE ui_sessions SET title = ?, updated_at = ? WHERE id = ?").run(title, this.now(), id);
+    this.db.prepare("UPDATE ui_sessions SET title = ?, title_source = 'manual' WHERE id = ?").run(title, id);
     return this.getUiSession(id)!;
+  }
+
+  /** 自动标题落库：SQL 级原子守卫——仅 default 来源可写（手动改名/已生成/种子后 0 行）；
+   *  不动 updated_at（裁定 b：标题更新不得扰动会话排序）。返回是否生效。 */
+  autoTitleUiSession(id: string, title: string): boolean {
+    return this.db
+      .prepare("UPDATE ui_sessions SET title = ?, title_source = 'llm' WHERE id = ? AND title_source = 'default'")
+      .run(title, id).changes > 0;
   }
 
   touchUiSession(id: string): void {

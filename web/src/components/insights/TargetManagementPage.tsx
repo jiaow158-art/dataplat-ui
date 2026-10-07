@@ -355,7 +355,7 @@ function MonthTable({ months }: { months: TargetMonthRow[] | TargetDegraded }) {
 
 export default function TargetManagementPage({ onOpenEvent, onAsk }: {
   onOpenEvent: (id: string) => void;
-  onAsk: (question: string) => void;
+  onAsk: (question: string, titleHint?: string) => void; // titleHint=会话语义标题（presentation only，不进模型）
 }) {
   const [data, setData] = useState<TargetOverview | null>(null);
   const [events, setEvents] = useState<InsightActiveEvent[] | null>(null);
@@ -393,7 +393,7 @@ export default function TargetManagementPage({ onOpenEvent, onAsk }: {
             size="sm"
             disabled={annual == null}
             title={annual == null ? "数据未就绪" : undefined}
-            onClick={annual != null ? () => onAsk(buildQuestion(annual, events ?? [])) : undefined}
+            onClick={annual != null ? () => onAsk(buildQuestion(annual, events ?? []), "年度目标差距分析") : undefined}
           >
             让AI分析目标差距
           </PrimaryButton>

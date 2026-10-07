@@ -52,6 +52,13 @@ export default function App() {
     setSessions(await apiListSessions());
   }, []);
 
+  // P4 自动标题：ask 受理后 LLM 标题数秒内异步落库——补两次延迟轻刷让侧栏无刷新换标题
+  // （sessions 受控更新原地 diff；标题落库不动 updated_at，顺序与高亮天然不跳位——裁定 b）。
+  const scheduleTitleRefresh = useCallback(() => {
+    setTimeout(() => void refreshSessions(), 8000);
+    setTimeout(() => void refreshSessions(), 20000);
+  }, [refreshSessions]);
+
   // ===== P2-a 详情 overlay 开合 =====
   // 边界1：Back / ESC / 返回按钮同语义——都只关 overlay，view 与来源页状态不动。
   const closeDetail = useCallback(() => {
@@ -81,8 +88,9 @@ export default function App() {
 
   // P1-2 区域页「让AI分析」：预建会话→种 followup 问题→切对话（同 followup 编排；ChatView autoAsk 需已存在会话）。
   // 定义在 closeDetail 之后：closeDetail 入 deps，防 stale 闭包漏消费 history 条目。
-  const askSeed = useCallback(async (question: string) => {
-    const s = await apiCreateSession();
+  // P4 titleHint：驾驶舱入口的确定性语义标题（hint 来源，自动标题永不覆盖；presentation only 不进模型）。
+  const askSeed = useCallback(async (question: string, titleHint?: string) => {
+    const s = await apiCreateSession(titleHint);
     await refreshSessions();
     setActiveId(s.id);
     setFollowupSeed({ sessionId: s.id, question });
@@ -241,10 +249,14 @@ export default function App() {
           sessionTitle={active?.title ?? "新会话"}
           isAdmin={boot.isAdmin}
           onFirstAsk={(id) => {
-            setActiveId(id); // 首问成功：BFF 已自动建会话（标题=首问前 30 字），切入并刷列表
+            setActiveId(id); // 首问成功：BFF 已自动建会话（初始「新会话」，LLM 标题稍后落库），切入并刷列表
             void refreshSessions();
+            scheduleTitleRefresh(); // 异步标题落库后的侧栏轻刷
           }}
-          onSessionActivity={() => void refreshSessions()}
+          onSessionActivity={() => {
+            void refreshSessions();
+            scheduleTitleRefresh();
+          }}
           autoAsk={followupSeed && followupSeed.sessionId === (active?.id ?? null) ? followupSeed.question : undefined}
           onAutoAskDone={() => setFollowupSeed(null)}
         />
