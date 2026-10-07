@@ -215,7 +215,7 @@ export default function App() {
             setDetailSource("targets");
             setOpenEventId(id); // 只开 overlay，不切 view
           }}
-          onAsk={(q) => void askSeed(q)}
+          onAsk={(q, titleHint) => void askSeed(q, titleHint)}
         />
       ) : view === "regions" && insightsOn ? (
         <RegionBattleMapPage
@@ -227,7 +227,7 @@ export default function App() {
             closeDetail(); // 跳事件中心同属导航离开，先关 overlay（幂等）
             setView("events");
           }}
-          onAsk={(q) => void askSeed(q)}
+          onAsk={(q, titleHint) => void askSeed(q, titleHint)}
           focusRegion={regionFocus}
           onFocusRegionHandled={() => setRegionFocus(null)}
         />
