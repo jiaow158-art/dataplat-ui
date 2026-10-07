@@ -4,8 +4,8 @@
 // P1-4 问题总控台化：态势五卡 / 两层筛选（裁定3）/ 近30天经营摘要（裁定4/5）/ 字段排序（§十四）。
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { ApiError, apiInsightEventCenter, apiInsightFollowup } from "../../api";
-import type { EventCenterEvent, EventCenterPayload } from "../../types";
+import { ApiError, apiInsightEventCenter, apiInsightFollowup, apiInsightRegionMap } from "../../api";
+import type { EventCenterEvent, EventCenterPayload, RegionMapDegraded, RegionMapPayload } from "../../types";
 import AppShell from "../cockpit/AppShell";
 import PageHeader from "../cockpit/PageHeader";
 import SectionCard from "../cockpit/SectionCard";
@@ -46,11 +46,22 @@ const SORT_LABEL: Record<SortMode, string> = { recent: "最近发现", longest: 
 const pillCls = (on: boolean) =>
   `rounded px-2 py-0.5 text-[11px] transition-colors ${on ? "bg-ck-primary-soft font-medium text-ck-primary" : "text-ck-ink-3 hover:text-ck-ink-2"}`;
 
+// P2-b B2：region-map 载荷局部降级判别（{available:false}；与 RegionBattleMapPage 同款局部小拷贝）
+const isDegraded = (x: unknown): x is RegionMapDegraded =>
+  typeof x === "object" && x !== null && (x as RegionMapDegraded).available === false;
+
 export default function EventCenterPage({
-  onOpenEvent, onFollowed,
-}: { onOpenEvent: (id: string) => void; onFollowed: (r: { uiSessionId: string; seedQuestion: string }) => void }) {
+  onOpenEvent, onFollowed, onOpenRegion, onOpenTargetPage,
+}: {
+  onOpenEvent: (id: string) => void;
+  onFollowed: (r: { uiSessionId: string; seedQuestion: string }) => void;
+  onOpenRegion: (region: string) => void; // B2：唯一大区足迹 → 区域作战地图
+  onOpenTargetPage: () => void; // B3：target_gap → 目标管理
+}) {
   const [data, setData] = useState<EventCenterPayload | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // B2：区域关联独立拉取（服务端销售足迹），失败=null → 不出区域链接（诚实降级，不挡页面）
+  const [regionMap, setRegionMap] = useState<RegionMapPayload | null>(null);
   // 筛选态（全客户端）：值存原始 key（major/active/pending…），"全部"=不过滤
   const [q, setQ] = useState("");
   const [sev, setSev] = useState("全部");
@@ -69,6 +80,7 @@ export default function EventCenterPage({
   const [followBusy, setFollowBusy] = useState<string | null>(null);
   useEffect(() => {
     apiInsightEventCenter().then(setData).catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+    apiInsightRegionMap().then(setRegionMap).catch(() => setRegionMap(null));
   }, []);
   const orgs = useMemo(() => ["全部", ...new Set((data?.events ?? []).map((e) => e.org).filter((x): x is string => !!x))], [data]);
   const filtered = useMemo(() => {
@@ -96,6 +108,23 @@ export default function EventCenterPage({
     if (sortMode === "recent") return filtered;
     return [...filtered].sort((a, b) => b.persist_days - a.persist_days || (b.first_seen_date ?? "").localeCompare(a.first_seen_date ?? ""));
   }, [filtered, sortMode]);
+
+  // P2-b B2（裁定）：regionEvents 为服务端「销售足迹」关联（事件↔大区），不做标题模糊匹配；
+  // 反转为 event_id → 大区列表，仅映射到唯一大区（length===1）的事件出「区域视角」链接，
+  // 跨大区/无足迹事件保持普通详情；拉取失败或 regionEvents 降级 → 整表为 null，无链接
+  const eventRegions = useMemo(() => {
+    const re = regionMap?.regionEvents;
+    if (!re || isDegraded(re)) return null;
+    const m = new Map<string, string[]>();
+    for (const [region, evts] of Object.entries(re)) {
+      for (const ev of evts) {
+        const cur = m.get(ev.event_id);
+        if (cur) cur.push(region);
+        else m.set(ev.event_id, [region]);
+      }
+    }
+    return m;
+  }, [regionMap]);
 
   // 下拉筛选（L2）：值=原始 key、展示=查 label map（区域例外——选项本身就是展示文案）。
   // 裁定3 单向同步：L2 改动 life/sev 时快捷分段回「全部」，避免双源打架
@@ -229,15 +258,29 @@ export default function EventCenterPage({
               </thead>
               <tbody>
                 {rows.length === 0 && <tr><td colSpan={7}><EmptyState text={!data ? "…" : data.events.length === 0 ? "暂无经营事件" : "暂无匹配事件"} /></td></tr>}
-                {rows.map((e) => (
+                {rows.map((e) => {
+                  const regions = eventRegions?.get(e.event_id);
+                  const uniqRegion = regions?.length === 1 ? regions[0] : null; // 非唯一大区不出区域链接
+                  return (
                   <tr key={e.event_id} className="border-b border-ck-line/60 last:border-0 hover:bg-ck-card-soft">
-                    {/* 事件两行：标题（两行截断，保可读性）+晚到 badge；次行 类型·首次发现 MM-DD */}
+                    {/* 事件两行：标题（两行截断，保可读性）+晚到 badge；次行 类型·首次发现 MM-DD + 上下文桥接链接 */}
                     <td className="px-3 py-2.5 align-top">
                       <button type="button" className="flex items-start gap-1 text-left font-semibold text-ck-ink transition-colors hover:text-ck-primary" onClick={() => onOpenEvent(e.event_id)}>
                         <span className="line-clamp-2" title={e.title}>{e.title}</span>
                         {e.late && <span className="shrink-0"><StatusTag tone="warning" size="sm">晚到</StatusTag></span>}
                       </button>
-                      <div className="mt-0.5 text-xs text-ck-ink-3">{TYPE_LABEL[e.event_type] ?? e.event_type} · 首次发现 {e.first_seen_date.slice(5)}</div>
+                      {/* 次行允许折行（1366 事件列 29%）容纳 B2/B3 从属链接；标题两行截断不受影响 */}
+                      <div className="mt-0.5 flex flex-wrap items-baseline gap-x-1 text-xs text-ck-ink-3">
+                        <span className="whitespace-nowrap">{TYPE_LABEL[e.event_type] ?? e.event_type} · 首次发现 {e.first_seen_date.slice(5)}</span>
+                        {/* B2（裁定）：regionEvents 销售足迹关联，非标题模糊匹配；非唯一大区不出链接 */}
+                        {uniqRegion && (
+                          <button type="button" className="text-xs text-ck-primary hover:underline" onClick={() => onOpenRegion(uniqRegion)}>· 区域视角</button>
+                        )}
+                        {/* B3（裁定）：只做类型级跳转，不造目标筛选语义 */}
+                        {e.event_type === "target_gap" && (
+                          <button type="button" className="text-xs text-ck-primary hover:underline" onClick={onOpenTargetPage}>· 看目标</button>
+                        )}
+                      </div>
                     </td>
                     <td className="whitespace-nowrap px-3 py-2.5 align-top">
                       <StatusTag tone={e.severity === "major" ? "danger" : "warning"} size="sm">{e.severity === "major" ? "重大异常" : "一般异常"}</StatusTag>
@@ -272,7 +315,8 @@ export default function EventCenterPage({
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </SectionCard>

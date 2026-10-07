@@ -28,6 +28,8 @@ export default function App() {
   const [openEventId, setOpenEventId] = useState<string | null>(null);
   const [detailSource, setDetailSource] = useState<"insights" | "events" | "regions" | "targets">("insights"); // 来源语义保留（P0 边界3）；overlay 模型下侧栏高亮恒跟 view，渲染不再读取
   const [followupSeed, setFollowupSeed] = useState<{ sessionId: string; question: string } | null>(null);
+  // P2-b B2：事件中心→区域页的一次性聚焦（transient：区域页消费即回执清零，selectedRegion 不上提）
+  const [regionFocus, setRegionFocus] = useState<string | null>(null);
   void detailSource; // 安抚 noUnusedLocals：状态保留供后续「返回来源」语义使用，各 onOpenEvent 仍照常赋值
 
   const enter = useCallback(async (username: string, isAdmin: boolean) => {
@@ -87,6 +89,12 @@ export default function App() {
     closeDetail(); // 由此切走视图同样收起 overlay（幂等）
     setView("chat");
   }, [refreshSessions, closeDetail]);
+
+  // P2-b B2：事件→区域作战地图（事件中心只对唯一大区足迹出链接）：种一次性 focus 并切视图
+  const openRegionFocus = useCallback((r: string) => {
+    setRegionFocus(r);
+    setView("regions");
+  }, []);
 
   if (boot.kind === "loading") {
     return (
@@ -189,6 +197,8 @@ export default function App() {
             setView("chat");
             void refreshSessions();
           }}
+          onOpenRegion={openRegionFocus}
+          onOpenTargetPage={() => setView("targets")} // B3：target_gap 类型级跳转
         />
       ) : view === "targets" && insightsOn ? (
         <TargetManagementPage
@@ -209,6 +219,8 @@ export default function App() {
             setView("events");
           }}
           onAsk={(q) => void askSeed(q)}
+          focusRegion={regionFocus}
+          onFocusRegionHandled={() => setRegionFocus(null)}
         />
       ) : view === "insights" && insightsOn ? (
         <OperatingDashboardPage
@@ -220,6 +232,7 @@ export default function App() {
             closeDetail(); // 跳事件中心同属导航离开，先关 overlay（幂等）
             setView("events");
           }}
+          onOpenTarget={() => setView("targets")} // B1：经营概览·目标进度 → 目标管理
         />
       ) : (
         <ChatView

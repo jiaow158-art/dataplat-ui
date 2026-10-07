@@ -376,10 +376,12 @@ function BattleCard({ block, onSelect }: { block: RegionMapRegionRow[] | RegionM
   );
 }
 
-export default function RegionBattleMapPage({ onOpenEvent, onOpenEventCenter, onAsk }: {
+export default function RegionBattleMapPage({ onOpenEvent, onOpenEventCenter, onAsk, focusRegion, onFocusRegionHandled }: {
   onOpenEvent: (id: string) => void;
   onOpenEventCenter: () => void;
   onAsk: (question: string) => void;
+  focusRegion?: string | null; // P2-b B2：transient 聚焦意图（App 消费后清零），selectedRegion 仍归本页自持
+  onFocusRegionHandled?: () => void;
 }) {
   const [data, setData] = useState<RegionMapPayload | null>(null);
   const [activeJoin, setActiveJoin] = useState<Map<string, InsightActiveEvent> | null>(null);
@@ -394,6 +396,15 @@ export default function RegionBattleMapPage({ onOpenEvent, onOpenEventCenter, on
       .then((r) => setActiveJoin(new Map(r.events.map((e) => [e.event_id, e]))))
       .catch(() => setActiveJoin(new Map()));
   }, []);
+
+  // P2-b B2（裁定）：transient focus-in——一次性聚焦意图进来即选中该大区并回执清零；
+  // 不提升状态，selectedRegion 仍归本页（用户随后可点其他区/返回全国）
+  useEffect(() => {
+    if (focusRegion) {
+      setSelectedRegion(focusRegion);
+      onFocusRegionHandled?.();
+    }
+  }, [focusRegion, onFocusRegionHandled]);
 
   const nat = data && !isDegraded(data.national) ? data.national : null;
   const regionsDegraded = !data || isDegraded(data.regions);

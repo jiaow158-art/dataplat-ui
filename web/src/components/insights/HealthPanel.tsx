@@ -107,7 +107,8 @@ function StatusCell({ r }: { r: InsightHealthRing }) {
   );
 }
 
-export default function HealthPanel() {
+// onOpenTarget（P2-b B1 裁定）：目标进度块头行右缘「查看目标 →」直达目标管理页；未传则不显链接
+export default function HealthPanel({ onOpenTarget }: { onOpenTarget?: () => void }) {
   const [data, setData] = useState<InsightHealthScore | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
@@ -136,7 +137,13 @@ export default function HealthPanel() {
       </div>
       {data.target && (
         <div className="mt-4 rounded-lg bg-ck-card-soft p-3">
-          <div className="text-xs text-ck-ink-2">{data.target.year} 年目标进度</div>
+          {/* B1：标题与「查看目标」同一 flex 行，链接居右 */}
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs text-ck-ink-2">{data.target.year} 年目标进度</span>
+            {onOpenTarget && (
+              <button type="button" className="text-xs text-ck-primary hover:underline" onClick={onOpenTarget}>查看目标 →</button>
+            )}
+          </div>
           <div className="mt-1 flex items-center gap-3">
             <Ring value={data.target.achieve_pct}>
               <div className="text-[11px] font-semibold text-ck-ink">{data.target.achieve_pct}%</div>

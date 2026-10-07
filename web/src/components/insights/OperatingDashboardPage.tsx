@@ -10,8 +10,8 @@ import EventCenterView from "./EventCenterView";
 import HealthPanel from "./HealthPanel";
 
 export default function OperatingDashboardPage({
-  onOpenEvent, onOpenEventCenter,
-}: { onOpenEvent: (id: string) => void; onOpenEventCenter: () => void }) {
+  onOpenEvent, onOpenEventCenter, onOpenTarget,
+}: { onOpenEvent: (id: string) => void; onOpenEventCenter: () => void; onOpenTarget: () => void }) {
   const [daily, setDaily] = useState<InsightDaily | null>(null);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
@@ -79,7 +79,8 @@ export default function OperatingDashboardPage({
             <BusinessEventList events={daily.events} onOpen={onOpenEvent} />
           )}
         </div>
-        <div className="xl:w-80 xl:shrink-0"><HealthPanel /></div>
+        {/* B1：透传 onOpenTarget（经营概览·目标进度 → 目标管理） */}
+        <div className="xl:w-80 xl:shrink-0"><HealthPanel onOpenTarget={onOpenTarget} /></div>
       </div>
       <EventCenterView onOpen={onOpenEvent} onOpenEventCenter={onOpenEventCenter} />
     </AppShell>
