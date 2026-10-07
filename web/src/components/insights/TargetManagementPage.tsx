@@ -67,37 +67,56 @@ function KpiStrip({ annual }: { annual: TargetAnnual }) {
 /** L2 目标累计进度（裁定2 同口径）：累计目标=灰虚线（完整月整月目标 running Σ，当月点=
  *  月目标×月工作日进度%——MTD 同口径应完成额，不拿整月目标对 MTD 实际）；累计实际=蓝实线
  *  （当月=MTD）。终点标注「当前进度缺口」=双线共同末点差（与 KPI 距年度目标严格区分）。
- *  双线止于当月，零预测；null 实际月断线（实际线止于前一月）。 */
+ *  双线止于当月，零预测；null 目标/实际月各自断线（线止于前一月，null 不按 0 画）。 */
 function CumulativeProgressCard({ months }: { months: TargetMonthRow[] | TargetDegraded }) {
   if (isDegraded(months)) return <SectionCard title="目标累计进度"><DegradedLine reason={months.reason} /></SectionCard>;
 
   const currentIdx = months.findIndex((m) => m.isCurrent);
   const currentRow = currentIdx >= 0 ? months[currentIdx] : undefined;
-  // 当月纳入双线的条件：月工作日进度与月目标齐备；缺任一 → 双线止于最近完整月 + 当月另起说明行（不补值）
-  const currentIncluded = currentRow != null && currentRow.timePct != null && currentRow.targetWan != null;
+  // 目标序列断点：首个月目标为 null 的月（null 不按 0 画，目标线止于该月前一月）
+  const targetBreakIdx = months.findIndex((m) => m.targetWan == null);
+  // 当月纳入双线的条件：月工作日进度与月目标齐备，且目标序列未在当月之前断；
+  // 缺任一 → 双线止于最近完整月 + 当月另起说明行（不补值）
+  const currentIncluded =
+    currentRow != null && currentRow.timePct != null && currentRow.targetWan != null &&
+    (targetBreakIdx < 0 || targetBreakIdx >= currentIdx);
 
   let cumTarget = 0;
   let cumActual = 0;
+  let targetLive = true; // null 目标月即断线：目标线止于该月前一月（同 actualLive 规则，null 不按 0 画）
   let actualLive = true; // null 实际月即断线：实际线止于该月前一月（后续月不续画）
-  const pts: Array<{ label: string; target: number; actual: number | null }> = [];
+  const pts: Array<{ label: string; target: number | null; actual: number | null }> = [];
   months.forEach((m, i) => {
     if (i === currentIdx && !currentIncluded) return;
-    cumTarget += i === currentIdx ? (m.targetWan ?? 0) * ((m.timePct ?? 0) / 100) : (m.targetWan ?? 0);
+    if (m.targetWan == null) targetLive = false;
+    else if (targetLive) cumTarget += i === currentIdx ? m.targetWan * ((m.timePct ?? 0) / 100) : m.targetWan;
     if (m.actualWan == null) actualLive = false;
     else if (actualLive) cumActual += m.actualWan;
-    pts.push({ label: `${Number(m.month.slice(5))}月`, target: cumTarget, actual: actualLive ? cumActual : null });
+    pts.push({ label: `${Number(m.month.slice(5))}月`, target: targetLive ? cumTarget : null, actual: actualLive ? cumActual : null });
   });
 
   if (pts.length < 2) return <SectionCard title="目标累计进度"><EmptyState text="暂无历史目标序列" /></SectionCard>;
 
   const lastActualIdx = pts.reduce((acc, p, i) => (p.actual != null ? i : acc), -1);
+  const lastTargetIdx = pts.reduce((acc, p, i) => (p.target != null ? i : acc), -1);
   // 末点差在两线共同末点取（同口径对比点）
-  const gapEnd = lastActualIdx >= 0 ? pts[lastActualIdx].target - (pts[lastActualIdx].actual ?? 0) : null;
+  const endIdx = Math.min(lastTargetIdx, lastActualIdx);
+  const gapEnd = endIdx >= 0 ? (pts[endIdx].target ?? 0) - (pts[endIdx].actual ?? 0) : null;
   const W = 640, H = 230, PL = 50, PR = 14, PT = 16, PB = 26;
-  const maxV = Math.max(1, ...pts.map((p) => Math.max(p.target, p.actual ?? 0)));
+  const maxV = Math.max(1, ...pts.map((p) => Math.max(p.target ?? 0, p.actual ?? 0)));
   const x = (i: number) => PL + (i * (W - PL - PR)) / (pts.length - 1);
   const y = (v: number) => PT + (1 - v / maxV) * (H - PT - PB);
   const annotateStart = lastActualIdx >= 0 && x(lastActualIdx) < W / 2; // 末点偏左 → 标注放右侧防溢出
+  // 色带按段染色：段=相邻点区间，段色取区间右端点（累计目标−累计实际）的符号——实际低于目标
+  // 红染 / 反超绿染；符号变化处分段，同号相邻段合一个 polygon（相邻段在交叉点相接）。
+  const bandSegs: Array<{ from: number; to: number; fill: string }> = [];
+  for (let i = 1; i <= endIdx; i++) {
+    const d = (pts[i].target ?? 0) - (pts[i].actual ?? 0); // 段右端点差（段内两端必非 null，?? 0 仅为类型收窄）
+    const fill = d > 0 ? "rgba(214,75,75,0.08)" : "rgba(14,159,110,0.08)";
+    const prev = bandSegs[bandSegs.length - 1];
+    if (prev != null && prev.fill === fill && prev.to === i - 1) prev.to = i;
+    else bandSegs.push({ from: i - 1, to: i, fill });
+  }
 
   return (
     <SectionCard title="目标累计进度">
@@ -105,26 +124,29 @@ function CumulativeProgressCard({ months }: { months: TargetMonthRow[] | TargetD
         {[0, maxV / 2, maxV].map((v) => (
           <g key={v}>
             <line x1={PL} x2={W - PR} y1={y(v)} y2={y(v)} stroke="#f1f5f9" strokeWidth={1} />
-            <text x={PL - 4} y={y(v) + 3} textAnchor="end" fontSize={9} fill="#94a3b8">{fmtWanSmart(v)}</text>
+            {/* 基线 0 只显「0」（fmtWanSmart(0)="0 万"会带单位）——仅轴标签特例，不改公共 fmt */}
+            <text x={PL - 4} y={y(v) + 3} textAnchor="end" fontSize={9} fill="#94a3b8">{v === 0 ? "0" : fmtWanSmart(v)}</text>
           </g>
         ))}
         {pts.map((p, i) => (
           <text key={p.label} x={x(i)} y={H - 8} textAnchor="middle" fontSize={10} fill="#94a3b8">{p.label}</text>
         ))}
-        {lastActualIdx >= 0 && gapEnd != null && (
-          // 两线间色带：整带单色由末点状态定性（实际低于目标红染 / 反超绿染）
+        {bandSegs.map((s, k) => (
           <polygon
+            key={k}
             points={[
-              ...pts.slice(0, lastActualIdx + 1).map((p, i) => `${x(i).toFixed(1)},${y(p.target).toFixed(1)}`),
-              ...pts.slice(0, lastActualIdx + 1).map((p, i) => `${x(i).toFixed(1)},${y(p.actual ?? 0).toFixed(1)}`).reverse(),
+              ...pts.slice(s.from, s.to + 1).map((p, i) => `${x(i + s.from).toFixed(1)},${y(p.target ?? 0).toFixed(1)}`),
+              ...pts.slice(s.from, s.to + 1).map((p, i) => `${x(i + s.from).toFixed(1)},${y(p.actual ?? 0).toFixed(1)}`).reverse(),
             ].join(" ")}
-            fill={gapEnd > 0 ? "rgba(214,75,75,0.08)" : "rgba(14,159,110,0.08)"}
+            fill={s.fill}
+          />
+        ))}
+        {lastTargetIdx >= 1 && (
+          <polyline
+            points={pts.slice(0, lastTargetIdx + 1).map((p, i) => `${x(i).toFixed(1)},${y(p.target ?? 0).toFixed(1)}`).join(" ")}
+            fill="none" stroke="#94a3b8" strokeWidth={1.6} strokeDasharray="4 3"
           />
         )}
-        <polyline
-          points={pts.map((p, i) => `${x(i).toFixed(1)},${y(p.target).toFixed(1)}`).join(" ")}
-          fill="none" stroke="#94a3b8" strokeWidth={1.6} strokeDasharray="4 3"
-        />
         {lastActualIdx >= 1 && (
           <polyline
             points={pts.slice(0, lastActualIdx + 1).map((p, i) => `${x(i).toFixed(1)},${y(p.actual ?? 0).toFixed(1)}`).join(" ")}
@@ -157,7 +179,9 @@ function CumulativeProgressCard({ months }: { months: TargetMonthRow[] | TargetD
       </div>
       {currentRow && !currentIncluded && (
         <div className="mt-1 text-[11px] text-ck-ink-3">
-          当月（MTD 实际 {fmtWanSmart(currentRow.actualWan)}）未接入月度时间进度，未纳入双线
+          {currentRow.timePct == null
+            ? `当月（MTD 实际 ${fmtWanSmart(currentRow.actualWan)}）未接入月度时间进度，未纳入双线`
+            : `月度目标序列自 ${targetBreakIdx + 1} 月起缺失，当月（MTD 实际 ${fmtWanSmart(currentRow.actualWan)}）未纳入双线`}
         </div>
       )}
     </SectionCard>
@@ -170,7 +194,8 @@ function CumulativeProgressCard({ months }: { months: TargetMonthRow[] | TargetD
 function BehindTopCard({ centers, totalBehindWan }: { centers: TargetCenterRow[] | TargetDegraded; totalBehindWan: number | null }) {
   if (isDegraded(centers)) return <SectionCard title="进度缺口贡献 Top 5"><DegradedLine reason={centers.reason} /></SectionCard>;
   const behind = centers.filter((c) => c.behindWan > 0);
-  const aheadCount = centers.length - behind.length;
+  // 严格 <0 才计超前（=0 是持平：既不入榜也不算超前）
+  const aheadCount = centers.filter((c) => c.behindWan < 0).length;
   return (
     <SectionCard
       title="进度缺口贡献 Top 5"
@@ -204,11 +229,19 @@ function BehindTopCard({ centers, totalBehindWan }: { centers: TargetCenterRow[]
 }
 
 /** L4 相关经营事件：active 事件客户端过滤 event_type==="target_gap"（真实事件），≤3 条；
- *  0 条如实显空——绝不前端造事件。 */
-function TargetEventsCard({ events, onOpenEvent }: { events: InsightActiveEvent[]; onOpenEvent: (id: string) => void }) {
+ *  0 条如实显空——绝不前端造事件；拉取失败 ≠ 无事件 → err 标记单独显「暂不可用」（events=null 拉取中）。 */
+function TargetEventsCard({ events, err, onOpenEvent }: {
+  events: InsightActiveEvent[] | null;
+  err: boolean;
+  onOpenEvent: (id: string) => void;
+}) {
   return (
-    <SectionCard title="相关经营事件" extra={`${events.length} 条`}>
-      {events.length === 0 ? (
+    <SectionCard title="相关经营事件" extra={events != null ? `${events.length} 条` : null}>
+      {err ? (
+        <div className="py-6 text-center text-xs text-ck-ink-3">事件数据暂不可用</div>
+      ) : events == null ? (
+        <div className="py-6 text-center text-xs text-ck-ink-3">加载中…</div>
+      ) : events.length === 0 ? (
         <div className="py-6 text-center text-xs text-ck-ink-3">当前暂无目标偏差经营事件</div>
       ) : (
         events.slice(0, 3).map((e) => (
@@ -325,15 +358,16 @@ export default function TargetManagementPage({ onOpenEvent, onAsk }: {
   onAsk: (question: string) => void;
 }) {
   const [data, setData] = useState<TargetOverview | null>(null);
-  const [events, setEvents] = useState<InsightActiveEvent[]>([]);
+  const [events, setEvents] = useState<InsightActiveEvent[] | null>(null);
+  const [eventsErr, setEventsErr] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     apiInsightTargetOverview().then(setData).catch((e) => setErr(e instanceof Error ? e.message : String(e)));
-    // L4：target_gap 真实事件（active 池客户端过滤）；失败=空 → 如实显暂无
+    // L4：target_gap 真实事件（active 池客户端过滤）；拉取失败 ≠ 无事件 → err 标记（渲染「暂不可用」）
     apiInsightActiveEvents()
       .then((r) => setEvents(r.events.filter((e) => e.event_type === "target_gap")))
-      .catch(() => setEvents([]));
+      .catch(() => setEventsErr(true));
   }, []);
 
   if (err && !data)
@@ -359,7 +393,7 @@ export default function TargetManagementPage({ onOpenEvent, onAsk }: {
             size="sm"
             disabled={annual == null}
             title={annual == null ? "数据未就绪" : undefined}
-            onClick={annual != null ? () => onAsk(buildQuestion(annual, events)) : undefined}
+            onClick={annual != null ? () => onAsk(buildQuestion(annual, events ?? [])) : undefined}
           >
             让AI分析目标差距
           </PrimaryButton>
@@ -376,7 +410,7 @@ export default function TargetManagementPage({ onOpenEvent, onAsk }: {
           {/* L3 */}
           <BehindTopCard centers={data.centers} totalBehindWan={data.centersTotalBehindWan} />
           {/* L4 */}
-          <TargetEventsCard events={events} onOpenEvent={onOpenEvent} />
+          <TargetEventsCard events={events} err={eventsErr} onOpenEvent={onOpenEvent} />
           {/* L5 */}
           <MonthTable months={data.months} />
         </>

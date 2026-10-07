@@ -1,4 +1,4 @@
-// 进度环（HealthPanel/TargetManagementPage 两份私有 SVG 合并）：64 视口 r=26 粗 6、rotate(-90)。
+// 进度环（HealthPanel 专用；TargetManagementPage 在 P1-3 移除 Ring 用法）：64 视口 r=26 粗 6、rotate(-90)。
 // children 绝对居中叠放（分数/百分比由调用方塞进来）。
 import type { ReactNode } from "react";
 
