@@ -135,16 +135,18 @@ export default function EventCenterPage({
   const cutoff7 = data ? new Date(Date.parse(data.asOf) - 6 * 86400e3).toISOString().slice(0, 10) : "";
   const last7 = cutoff7 ? evts.filter((e) => e.first_seen_date && e.first_seen_date >= cutoff7).length : 0;
   const dayN = data ? evts.filter((e) => e.first_seen_date === data.asOf).length : 0;
-  // 持续最久＝进行中事件 persist_days 极值（极值事实，不造阈值）
+  // 持续最久＝进行中事件 persist_days 极值（极值事实，不造阈值）；存在性单独跟踪（0 天≠无进行中），
+  // 比较用 >= 使当日新发（persist_days=0）也能带出标题
+  const hasActive = evts.some((e) => e.lifecycle === "active");
   const longest = evts.reduce<{ days: number; title: string | null }>(
-    (best, e) => (e.lifecycle === "active" && e.persist_days > best.days ? { days: e.persist_days, title: e.title } : best),
+    (best, e) => (e.lifecycle === "active" && e.persist_days >= best.days ? { days: e.persist_days, title: e.title } : best),
     { days: 0, title: null },
   );
   const kpis = data ? [
     { label: "进行中", value: activeN, sub: "全量生命周期口径" },
     { label: "重大异常", value: majorActive, sub: `当前进行中${capped ? " · 基于最近500条" : ""}` },
-    { label: "近7日新增", value: last7, sub: `${data.asOf.slice(5)} 当日新增 +${dayN}` },
-    { label: "持续最久", value: `${longest.days} 天`, sub: <span className="line-clamp-2" title={longest.title ?? undefined}>{longest.title ?? "暂无进行中事件"}{capped ? " · 基于最近500条" : ""}</span> },
+    { label: "近7日新增", value: last7, sub: `${data.asOf.slice(5)} 当日新增 +${dayN}${capped ? " · 基于最近500条" : ""}` },
+    { label: "持续最久", value: hasActive ? `${longest.days} 天` : "—", sub: <span className="line-clamp-2" title={longest.title ?? undefined}>{hasActive ? `${longest.title ?? ""}${capped ? " · 基于最近500条" : ""}` : "暂无进行中事件"}</span> },
     { label: "已解除", value: resolvedN, sub: `近30日解除 ${data.summary.resolved.count} 条` },
   ] : [];
   return (
@@ -194,7 +196,8 @@ export default function EventCenterPage({
         )}
       </FilterBar>
       {/* P6 七列表（1366 无横滚）：1366−256 侧栏−2×32(lg:px-8)≈1046、再扣滚动条≈1030 内容宽；
-          事件 30%≈310px 两行 line-clamp 足够；操作 10%≈103px 竖排 h-7 按钮+文字链足够 */}
+          事件 29%≈299px 两行 line-clamp 足够；操作 11%≈113px（含 px-2）容 nowrap 按钮不溢出卡缘；
+          1920 下内容宽≈1576px、各列绝对更宽，无回归 */}
       <div className="flex flex-col gap-5 xl:flex-row">
         <div className="flex min-w-0 flex-1 flex-col gap-4">
           <SectionCard
@@ -211,13 +214,13 @@ export default function EventCenterPage({
           >
             <table className="w-full table-fixed text-xs">
               <colgroup>
-                <col style={{ width: "30%" }} />
+                <col style={{ width: "29%" }} />
                 <col style={{ width: "9%" }} />
                 <col style={{ width: "20%" }} />
                 <col style={{ width: "12%" }} />
                 <col style={{ width: "8%" }} />
                 <col style={{ width: "11%" }} />
-                <col style={{ width: "10%" }} />
+                <col style={{ width: "11%" }} />
               </colgroup>
               <thead>
                 <tr className="border-b border-ck-line text-left text-ck-ink-3">
@@ -260,7 +263,7 @@ export default function EventCenterPage({
                         <StatusTag tone={ATTR_TONE[e.attribution_status] ?? "neutral"} size="sm">AI · {ATTR_LABEL[e.attribution_status] ?? e.attribution_status}</StatusTag>
                       </div>
                     </td>
-                    <td className="px-3 py-2.5 align-top">
+                    <td className="px-2 py-2.5 align-top">
                       <div className="flex flex-col items-start gap-1">
                         <PrimaryButton size="sm" className="whitespace-nowrap" onClick={() => onOpenEvent(e.event_id)}>查看详情</PrimaryButton>
                         <button type="button" className="text-left text-ck-primary hover:underline disabled:pointer-events-none disabled:text-ck-ink-3" disabled={followBusy === e.event_id} onClick={() => void follow(e.event_id)}>
