@@ -1,40 +1,53 @@
-import { useState } from "react";
-import { ApiError, apiInsightFollowup } from "../../api";
+// ED-1 L9 基于本事件继续问 AI：沿用既有 followup 链路（BFF 种子会话 + 问数六步法），
+// 追问模板只从结构化字段派生（entities.name/type——不读自由文本猜原因，修正要求），
+// 与既有通用 prompts 并列；onAsk 由页面注入（页头「继续AI分析」复用同一编排）。
+import SectionCard from "../cockpit/SectionCard";
+
+/** 从结构化 entities 派生至多 2 个具体追问（仅用 name/type 字段拼接，零文本推测）。 */
+export function deriveFollowupPrompts(
+  entities: Array<{ name: string; type: string }>,
+): string[] {
+  const out: string[] = [];
+  for (const e of entities) {
+    if (out.length >= 2) break;
+    if (/客户/.test(e.type)) out.push(`重点分析 ${e.name} 的相关变化`);
+    else if (/渠道|运营中心|销售组|工程中心/.test(e.type)) out.push(`按 ${e.name} 继续拆解分析`);
+  }
+  return out;
+}
 
 export default function EventFollowupPanel({
-  eventId, prompts, onFollowed,
-}: { eventId: string; prompts: string[]; onFollowed: (r: { uiSessionId: string; seedQuestion: string }) => void }) {
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const go = async (prompt?: string) => {
-    if (busy) return;
-    setBusy(true);
-    setErr(null);
-    try {
-      const r = await apiInsightFollowup(eventId, prompt);
-      onFollowed(r);
-    } catch (e) {
-      setErr(e instanceof ApiError ? e.message : "追问创建失败");
-    } finally {
-      setBusy(false);
-    }
-  };
+  prompts, busy, onAsk, err,
+}: {
+  prompts: string[];
+  busy: boolean;
+  err: string | null;
+  onAsk: (prompt?: string) => void;
+}) {
   return (
-    <div className="rounded-xl bg-white p-6 ring-1 ring-slate-100">
-      <h3 className="text-sm font-semibold text-slate-900">基于本事件继续问 AI</h3>
-      <div className="mt-3 flex flex-wrap gap-2">
+    <SectionCard title="基于本事件继续问 AI">
+      <div className="flex flex-wrap gap-2">
         {prompts.map((p) => (
-          <button key={p} disabled={busy} onClick={() => void go(p)}
-            className="rounded-full bg-blue-50 px-3 py-1.5 text-sm text-blue-600 hover:bg-blue-100 disabled:opacity-50">
+          <button
+            key={p}
+            type="button"
+            disabled={busy}
+            onClick={() => onAsk(p)}
+            className="rounded-full border border-ck-primary/40 bg-ck-primary-soft px-3 py-1.5 text-sm text-ck-primary transition-colors hover:border-ck-primary disabled:opacity-50"
+          >
             {p}
           </button>
         ))}
-        <button disabled={busy} onClick={() => void go()}
-          className="rounded-lg bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
-          继续分析
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => onAsk()}
+          className="rounded-lg bg-ck-primary px-4 py-1.5 text-sm font-medium text-white transition-colors hover:bg-ck-primary-hover disabled:opacity-50"
+        >
+          {busy ? "创建中…" : "继续分析"}
         </button>
       </div>
-      {err && <p className="mt-2 text-xs text-red-500">{err}</p>}
-    </div>
+      {err && <p className="mt-2 text-xs text-ck-danger">{err}</p>}
+    </SectionCard>
   );
 }
