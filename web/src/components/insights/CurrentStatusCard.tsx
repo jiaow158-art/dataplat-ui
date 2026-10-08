@@ -5,7 +5,11 @@ import SectionCard from "../cockpit/SectionCard";
 import StatusTag from "../cockpit/StatusTag";
 import type { InsightEventDetail } from "../../types";
 
-const fmtTs = (sec: number) => new Date(sec * 1000).toLocaleDateString("zh-CN");
+/** 本地日期 ISO 形态（2026-10-01）——与后端 resolved_at/first_seen_date 同格式，
+ *  时序比较与展示共用（review finding：zh-CN 斜杠格式与连字符格式字符串比较恒错序）。 */
+const localIso = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const fmtTs = (sec: number) => localIso(new Date(sec * 1000));
 
 const Row = ({ label, value }: { label: string; value: string }) => (
   <div className="flex items-baseline justify-between gap-3 text-sm">

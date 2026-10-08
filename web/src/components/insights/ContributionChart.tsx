@@ -59,7 +59,7 @@ function buildGroups(d: InsightEventDetail): Group[] {
         if (items.length) groups.push({ title, items, expectTotal: total });
       };
       by(/渠道缺口$/, "按渠道的缺口贡献（同一维度）");
-      by(/运营中心缺口$/, "按运营中心的缺口贡献（同一维度）");
+      by(/(?:运营中心|工程中心)缺口$/, "按运营中心的缺口贡献（同一维度）"); // 战略工程中心等工程类中心同维度（review finding：漏配致分组退化）
       const matched = groups.reduce((n, g) => n + g.items.length, 0);
       if (matched < rest.length) {
         // 有无法归入已知维度的条目：整体退化为明细表（不猜维度归属）
@@ -68,8 +68,10 @@ function buildGroups(d: InsightEventDetail): Group[] {
       return groups;
     }
     default:
-      return w.length >= 3
-        ? [{ title: "贡献明细（按原始顺序）", items: w.slice(1, -1), expectTotal: null }]
+      // 未知类型且无锚点结构先验：全量按原始顺序展示，不做首尾丢弃假设（review finding：
+      // 盲丢首尾可能在无锚点结构下静默吞掉真实贡献条目）
+      return w.length >= 2
+        ? [{ title: "贡献明细（按原始顺序，维度未识别）", items: w, expectTotal: null }]
         : [];
   }
 }

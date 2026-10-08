@@ -58,7 +58,7 @@ export default function EventDetailPage({
   if (err) return <AppShell><EmptyState text="事件加载失败" hint={err} /></AppShell>;
   if (!d) return <AppShell><EmptyState text="加载中…" /></AppShell>;
   const late = d.evidence.some((ev) => ev.is_late === 1); // 晚到徽标口径同事件中心（evidence 任一 is_late）
-  const prompts = [...deriveFollowupPrompts(d.attribution.entities), ...d.followupPrompts];
+  const prompts = [...new Set([...deriveFollowupPrompts(d.attribution.entities), ...d.followupPrompts])]; // 去重防同名 key
   return (
     <AppShell>
       <button type="button" className="self-start text-sm text-ck-primary hover:underline" onClick={onBack}>← 返回</button>
@@ -66,14 +66,17 @@ export default function EventDetailPage({
         title={d.event.title}
         subtitle={`首现 ${d.event.first_seen_date} · 数据日 ${d.event.data_date}`}
         meta={
-          <button
-            type="button"
-            disabled={followBusy}
-            onClick={() => void follow()}
-            className="rounded-lg bg-ck-primary px-3.5 py-1.5 text-sm font-medium text-white transition-colors hover:bg-ck-primary-hover disabled:opacity-50"
-          >
-            {followBusy ? "创建中…" : "继续 AI 分析"}
-          </button>
+          <div className="flex flex-col items-end gap-1">
+            <button
+              type="button"
+              disabled={followBusy}
+              onClick={() => void follow()}
+              className="rounded-lg bg-ck-primary px-3.5 py-1.5 text-sm font-medium text-white transition-colors hover:bg-ck-primary-hover disabled:opacity-50"
+            >
+              {followBusy ? "创建中…" : "继续 AI 分析"}
+            </button>
+            {followErr && <span className="text-xs text-ck-danger">{followErr}</span>}
+          </div>
         }
       >
         <StatusTag tone={d.event.severity === "major" ? "danger" : "warning"}>
