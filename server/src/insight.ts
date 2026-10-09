@@ -8,12 +8,14 @@ import type { BffStore } from "./db.ts";
 
 const INSIGHT_TIMEOUT_MS = 5000;
 
-export function insightFetch(base: string, path: string, method = "GET", body?: unknown, user?: string): Promise<{ status: number; body: string }> {
+export function insightFetch(base: string, path: string, method = "GET", body?: unknown, user?: string,
+  adminToken?: string): Promise<{ status: number; body: string }> {
   const u = new URL(base + path);
   return new Promise((resolve, reject) => {
     const rq = httpRequest(
       { hostname: u.hostname, port: u.port || 80, path: u.pathname + u.search, method, timeout: INSIGHT_TIMEOUT_MS,
-        headers: { ...(user ? { "X-User": user } : {}), ...(body !== undefined ? { "Content-Type": "application/json" } : {}) } },
+        headers: { ...(user ? { "X-User": user } : {}), ...(adminToken ? { "X-Insight-Admin-Token": adminToken } : {}),
+                   ...(body !== undefined ? { "Content-Type": "application/json" } : {}) } },
       (res) => {
         const chunks: Buffer[] = [];
         res.on("data", (c: Buffer) => chunks.push(c));
@@ -26,7 +28,7 @@ export function insightFetch(base: string, path: string, method = "GET", body?: 
   });
 }
 
-export function insightRouter(store: BffStore, insightUrl: string | undefined): Router {
+export function insightRouter(store: BffStore, insightUrl: string | undefined, adminToken?: string): Router {
   const r = Router();
 
   const gate = (req: Request, res: Response, next: NextFunction) => {
@@ -36,6 +38,47 @@ export function insightRouter(store: BffStore, insightUrl: string | undefined): 
     }
     next();
   };
+
+  // SCH-1 数据更新管理面：仅 is_admin（裁定4——BFF 会话层承担 CSRF/Origin；
+  // 上游再加 X-Insight-Admin-Token 双保险）。普通用户 403，重型触发不可达。
+  const adminGate = (req: Request, res: Response, next: NextFunction) => {
+    if (!store.getUser(req.user!)?.is_admin) {
+      res.status(403).json({ error: { code: "FORBIDDEN", message: "admin only" } });
+      return;
+    }
+    const origin = req.headers.origin;
+    if (origin && req.headers.host && new URL(origin).host !== req.headers.host) {
+      res.status(403).json({ error: { code: "FORBIDDEN", message: "cross-origin rejected" } });
+      return;
+    }
+    next();
+  };
+
+  const proxyAdmin = async (res: Response, path: string, method = "GET", body?: unknown, req?: Request) => {
+    if (!insightUrl || !adminToken) {
+      res.status(503).json({ error: { code: "INSIGHT_ADMIN_UNSET", message: "insight url/admin token unset" } });
+      return;
+    }
+    try {
+      const up = await insightFetch(insightUrl, path, method, body, req?.user, adminToken);
+      res.status(up.status).type("json").send(up.body);
+    } catch {
+      res.status(503).json({ error: { code: "INSIGHT_UNAVAILABLE", message: "insight api unreachable" } });
+    }
+  };
+
+  r.get("/admin/status", gate, adminGate, (req, res) => { void proxyAdmin(res, "/admin/status", "GET", undefined, req); });
+  r.post("/admin/trigger", gate, adminGate, (req, res) => {
+    const body = (req.body ?? {}) as { action?: unknown; brief_date?: unknown };
+    const allowed = ["daily_run", "prewarm_target", "prewarm_region", "cache_invalidate"];
+    if (typeof body.action !== "string" || !allowed.includes(body.action)) {
+      res.status(400).json({ error: { code: "BAD_ACTION", message: `action must be one of ${allowed.join(",")}` } });
+      return;
+    }
+    // by=登录名由服务端注入（请求方不可伪造审计归属）
+    void proxyAdmin(res, "/admin/trigger", "POST",
+      { action: body.action, brief_date: typeof body.brief_date === "string" ? body.brief_date : undefined, by: req.user }, req);
+  });
 
   const proxy = async (res: Response, path: string, req?: Request, method = "GET", body?: unknown) => {
     if (!insightUrl) {

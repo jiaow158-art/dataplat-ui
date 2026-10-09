@@ -199,3 +199,22 @@ export const apiInsightTargetOverview = () => api<TargetOverview>("GET", "/api/i
 
 // ── M-i8 区域作战地图（五块可局部降级；同窗同比/level 三档/事件关联口径全在服务端）───────
 export const apiInsightRegionMap = () => api<RegionMapPayload>("GET", "/api/insight/region-map");
+
+// ── SCH-1 数据更新管理（仅 is_admin；BFF 门禁 + insight-api token 双保险）──────────────
+export interface InsightPipelineRun {
+  run_id: string; job_type: string; phase: string; brief_date: string | null;
+  status: string; trigger_type: string; triggered_by: string | null;
+  scheduled_at: number | null; started_at: number | null; finished_at: number | null;
+  retry_count: number; error_message: string | null; heartbeat_at: number | null;
+}
+export interface InsightAdminStatus {
+  scheduler: { v: string; updated_at: number } | null;
+  lock: { holder: string; acquired_at: number; heartbeat_at: number; brief_date: string | null } | null;
+  recent_runs: InsightPipelineRun[];
+  queue: Array<{ request_id: string; action: string; brief_date: string | null; requested_by: string; requested_at: number; status: string; note: string | null }>;
+  cache: Array<{ key: string }>;
+  freeze_note: string;
+}
+export const apiInsightAdminStatus = () => api<InsightAdminStatus>("GET", "/api/insight/admin/status");
+export const apiInsightAdminTrigger = (action: string, briefDate?: string) =>
+  api<{ request_id: string; status: string }>("POST", "/api/insight/admin/trigger", { action, brief_date: briefDate });

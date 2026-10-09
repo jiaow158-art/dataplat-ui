@@ -81,7 +81,7 @@ export interface BffHandle {
 }
 
 export async function startBff(
-  opts: { gatewayUrl?: string; reportsDir?: string; staticDir?: string; gwDbPath?: string; harnessDir?: string; insightUrl?: string; titleGen?: (q: string) => Promise<string | null> } = {},
+  opts: { gatewayUrl?: string; reportsDir?: string; staticDir?: string; gwDbPath?: string; harnessDir?: string; insightUrl?: string; insightAdminToken?: string; titleGen?: (q: string) => Promise<string | null> } = {},
 ): Promise<BffHandle> {
   const root = mkdtempSync(join(tmpdir(), "bff-test-"));
   const db = initDb(root);
@@ -90,6 +90,7 @@ export async function startBff(
     gatewayUrl: opts.gatewayUrl ?? "http://127.0.0.1:1", // 缺省指向必然不可达端口（Task2 不触网关）
     authToken: GATEWAY_TOKEN,
     titleGen: opts.titleGen ?? (async () => null), // P4 注入点；测试缺省不出网（开发机可能配了 DEEPSEEK_API_KEY，防真实 LLM 调用）
+    insightAdminToken: opts.insightAdminToken, // SCH-1 数据更新管理面
     reportsDir: opts.reportsDir, // UI-T7 报告静态服务根目录（不传 = 端点 500）
     staticDir: opts.staticDir, // M3-T1 静态托管（不传 = 无托管，原行为）
     gwDbPath: opts.gwDbPath, // M4-B3/B4 网关库只读直连（不传 = 审计/统计 503 GW_DB_UNSET）

@@ -1,4 +1,4 @@
-// M4 管理后台壳：六子页 Tab（用户管理/审计查询/使用统计/反馈队列/知识库/域申请）+ 返回对话。
+// M4 管理后台壳：七子页 Tab（用户/审计/统计/反馈/知识库/域申请/数据更新）+ 返回对话。
 // 入口仅管理员可见（App.tsx 按 /api/me.is_admin 渲染）；简单 state 路由与现有风格一致。
 import { useCallback, useState } from "react";
 import UsersPage from "./UsersPage";
@@ -7,8 +7,9 @@ import StatsPage from "./StatsPage";
 import IncidentsPage from "./IncidentsPage";
 import KnowledgePage from "./KnowledgePage";
 import DomainRequestsPage from "./DomainRequestsPage";
+import DataUpdatePage from "./DataUpdatePage";
 
-type Tab = "users" | "audit" | "stats" | "incidents" | "knowledge" | "domains";
+type Tab = "users" | "audit" | "stats" | "incidents" | "knowledge" | "domains" | "data";
 
 const TABS: { key: Tab; label: string }[] = [
   { key: "users", label: "用户管理" },
@@ -17,6 +18,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "incidents", label: "反馈队列" },
   { key: "knowledge", label: "知识库" },
   { key: "domains", label: "域申请" },
+  { key: "data", label: "数据更新" },
 ];
 
 export default function AdminView({ username, onBack }: { username: string; onBack: () => void }) {
@@ -63,6 +65,7 @@ export default function AdminView({ username, onBack }: { username: string; onBa
         {tab === "incidents" && <IncidentsPage onOpenRun={openRun} />}
         {tab === "knowledge" && <KnowledgePage />}
         {tab === "domains" && <DomainRequestsPage />}
+        {tab === "data" && <DataUpdatePage />}
       </div>
     </div>
   );

@@ -32,6 +32,7 @@ const app = createApp(store, {
   gwDbPath: process.env.GW_DB_PATH ? resolve(process.env.GW_DB_PATH) : undefined,
   harnessDir: process.env.HARNESS_DIR ? resolve(process.env.HARNESS_DIR) : undefined,
   insightUrl: process.env.INSIGHT_URL || undefined,
+  insightAdminToken: process.env.INSIGHT_ADMIN_TOKEN || undefined, // SCH-1 数据更新管理面（缺省时 admin 代理 503）
 });
 
 app.listen(port, host, () => {

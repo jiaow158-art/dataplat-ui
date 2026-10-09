@@ -68,6 +68,8 @@ export interface BffConfig {
   insightUrl?: string;
   /** P4 自动标题生成器（注入点：单测传假实现；缺省真实现读 DEEPSEEK_API_KEY，未配置即静默关闭）。 */
   titleGen?: (question: string) => Promise<string | null>;
+  /** SCH-1 insight 管理面共享 token（env INSIGHT_ADMIN_TOKEN；未配置时 admin 代理 503）。 */
+  insightAdminToken?: string;
 }
 
 const SESSION_COOKIE = "sid";
@@ -146,7 +148,7 @@ export function createApp(store: BffStore, config: BffConfig): Express {
   });
 
   // ── M-i3 经营洞察（flag 门禁 + insight-api 代理；见 src/insight.ts）──────────────
-  app.use("/api/insight", insightRouter(store, config.insightUrl));
+  app.use("/api/insight", insightRouter(store, config.insightUrl, config.insightAdminToken));
 
   // ── 账号会话 ──────────────────────────────────────────────────────────────────────
 
