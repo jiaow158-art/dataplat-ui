@@ -28,6 +28,16 @@ async function seedUsers(app: BffHandle): Promise<void> {
   app.store.upsertUser("zhang", hashSync("pw-zhang-12345", 10));
 }
 
+test("2026-10-09 内网开放裁定：新建账号默认开 insight_cockpit（经营模块全员可见，可 CLI 逐人关）", () => {
+  const store = new BffStore(initDb(mkdtempSync(join(tmpdir(), "flag-default-"))));
+  store.upsertUser("newbie", hashSync("pw-x-12345", 10));
+  assert.equal(store.insightEnabled("newbie"), true, "新建即默认可见");
+  // 改密路径不得翻动已关的 flag
+  store.setFlag("newbie", "insight_cockpit", false);
+  store.upsertUser("newbie", hashSync("pw-y-12345", 10));
+  assert.equal(store.insightEnabled("newbie"), false, "改密不动 flag");
+});
+
 test("迁移：旧库（无 disabled 列）经 initDb 幂等补齐，存量行默认 0", () => {
   const root = mkdtempSync(join(tmpdir(), "bff-b2-"));
   try {

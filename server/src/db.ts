@@ -210,13 +210,16 @@ export class BffStore {
 
   // ---------- 账号（admin CLI 写，登录读） ----------
 
-  /** upsert 账号；返回是否新建（false = 改密）。opts.isAdmin 建号/改密时置角色；不传则不动角色。 */
+  /** upsert 账号；返回是否新建（false = 改密）。opts.isAdmin 建号/改密时置角色；不传则不动角色。
+   *  2026-10-09 内网开放裁定：新建账号默认开 insight_cockpit（经营模块全员可见；
+   *  需要关闭时用 CLI `npm run insight:flag -- off <name>` 逐人关）。 */
   upsertUser(username: string, passwordHash: string, opts?: { isAdmin?: boolean }): boolean {
     const created = this.getUser(username) === undefined;
     if (created) {
       this.db
         .prepare("INSERT INTO users (username, password_hash, is_admin, created_at) VALUES (?, ?, ?, ?)")
         .run(username, passwordHash, opts?.isAdmin ? 1 : 0, this.now());
+      this.setFlag(username, "insight_cockpit", true);
     } else if (opts?.isAdmin !== undefined) {
       this.db
         .prepare("UPDATE users SET password_hash = ?, is_admin = ? WHERE username = ?")
