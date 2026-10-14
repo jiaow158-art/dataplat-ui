@@ -4,7 +4,7 @@
 // P2-a 事件详情 = fixed 全屏 overlay：打开只设 openEventId 不切 view，来源页保持 mounted
 // （筛选/选中/滚动在关闭后原样保留）；浏览器 Back / ESC / 返回按钮三条关闭路径同语义。
 import { useCallback, useEffect, useState } from "react";
-import { ApiError, apiCreateSession, apiInsightEnabled, apiListSessions, apiLogout, apiMe } from "./api";
+import { ApiError, apiCreateSession, apiInsightEnabled, apiListSessions, apiLogout, apiMe, getAuthEpoch } from "./api";
 import type { UiSession } from "./types";
 import LoginScreen from "./components/LoginScreen";
 import Sidebar from "./components/Sidebar";
@@ -49,13 +49,42 @@ export default function App() {
   }, [enter]);
 
   // 会话被吊销（停用/踢出/改密/单会话被新登录顶替）：任何 API 401 广播 → 弹回登录屏。
-  // boot 切 login 即卸载主视图（useTaskStream 的 EventSource 随 unmount 清理）；SSE 流被
-  // 服务端掐断后经 status 轮询 401 走同一链路。
+  // 纪元守卫：只处理「请求纪元 == 当前纪元」的 401——被踢后已重新登录（apiLogin 已
+  // bumpAuthEpoch）时，旧登录态在途请求的迟到 401 不误伤新登录态。boot 切 login 即卸载
+  // 主视图（useTaskStream 的 EventSource 随 unmount 清理）；SSE 流被服务端掐断后经
+  // status 轮询 401 走同一链路。
   useEffect(() => {
-    const onUnauthorized = () => setBoot({ kind: "login" });
+    const onUnauthorized = (ev: Event) => {
+      const epoch = (ev as CustomEvent<{ epoch?: number }>).detail?.epoch;
+      if (epoch !== getAuthEpoch()) return; // 迟到 401：登录态已换代，忽略
+      setBoot({ kind: "login" });
+    };
     window.addEventListener("bff-unauthorized", onUnauthorized);
     return () => window.removeEventListener("bff-unauthorized", onUnauthorized);
   }, []);
+
+  // 空闲页面主动复查：登录态下每 30s、窗口重新聚焦/切回可见时立即探一次 /api/me——被停用/
+  // 被顶替的无操作页面不必等下一次业务请求才发现失效。探活失败不在此分支处理：401 走上面的
+  // bff-unauthorized 广播（带纪元防迟到误伤），其他错误（网络抖动）不应踢人。只读 /api/me，
+  // 不碰问数业务链路；boot 离开 ready（登出/被踢/组件卸载）即清理定时器与监听。
+  useEffect(() => {
+    if (boot.kind !== "ready") return;
+    const check = () => {
+      void apiMe().catch(() => {});
+    };
+    const onFocus = () => check();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") check();
+    };
+    const timer = setInterval(check, 30_000);
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [boot.kind]);
 
   const refreshSessions = useCallback(async () => {
     setSessions(await apiListSessions());

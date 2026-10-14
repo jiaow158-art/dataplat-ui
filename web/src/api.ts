@@ -44,7 +44,17 @@ export class ApiError extends Error {
   }
 }
 
+// 登录态纪元：每次成功登录自增。api() 在请求起点记录纪元，401 广播时携带——App 只处理
+// 「纪元 == 当前」的 401。用户被踢后重新登录的场景：旧登录态在途请求的迟到 401 不会
+// 误伤新登录态（登录屏上的失败 401 同理被忽略）。
+let authEpoch = 0;
+export const bumpAuthEpoch = (): void => {
+  authEpoch += 1;
+};
+export const getAuthEpoch = (): number => authEpoch;
+
 async function api<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const epoch = authEpoch; // 请求起点的登录态纪元（401 迟到判定依据）
   let res: Response;
   try {
     res = await fetch(path, {
@@ -56,9 +66,10 @@ async function api<T>(method: string, path: string, body?: unknown): Promise<T> 
     throw new ApiError(0, "NETWORK", "无法连接服务器，请稍后重试");
   }
   if (!res.ok) {
-    // 会话被吊销（停用/踢出/改密/单会话被新登录顶替）：广播给 App 弹回登录屏。错误照常抛出，
-    // 各调用方的展示逻辑不变。登录失败本身也是 401，但彼时已在登录屏，App 侧处理为幂等 no-op。
-    if (res.status === 401) window.dispatchEvent(new Event("bff-unauthorized"));
+    // 会话被吊销（停用/踢出/改密/单会话被新登录顶替）：携带请求纪元广播给 App 弹回登录屏。
+    // 错误照常抛出，各调用方的展示逻辑不变。登录失败本身也是 401，但彼时已在登录屏（纪元
+    // 未变也不会误伤——App 幂等处理）；重新登录后的迟到 401 因纪元已过被 App 忽略。
+    if (res.status === 401) window.dispatchEvent(new CustomEvent("bff-unauthorized", { detail: { epoch } }));
     let code = "HTTP_ERROR";
     let message = `请求失败（HTTP ${res.status}）`;
     try {
@@ -78,7 +89,10 @@ async function api<T>(method: string, path: string, body?: unknown): Promise<T> 
 
 export const apiMe = () => api<MeInfo>("GET", "/api/me");
 export const apiLogin = (username: string, password: string) =>
-  api<{ username: string }>("POST", "/api/auth/login", { username, password });
+  api<{ username: string }>("POST", "/api/auth/login", { username, password }).then((r) => {
+    bumpAuthEpoch(); // 新登录态开启新纪元：旧登录态在途请求的迟到 401 全部作废
+    return r;
+  });
 export const apiLogout = () => api<void>("POST", "/api/auth/logout");
 
 // ── UI 会话 CRUD ──────────────────────────────────────────────────────────────────

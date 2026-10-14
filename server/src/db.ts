@@ -208,6 +208,12 @@ export class BffStore {
     this.now = now;
   }
 
+  /** 多写事务边界（better-sqlite3 同步事务）：登录踢旧/停用吊销/改密吊销等成组写的原子提交——
+   *  进程崩溃不留半完成状态（请求间本就单线程串行，事务解决的是崩溃一致性）。 */
+  tx<T>(fn: () => T): T {
+    return this.db.transaction(fn)();
+  }
+
   // ---------- 账号（admin CLI 写，登录读） ----------
 
   /** upsert 账号；返回是否新建（false = 改密）。opts.isAdmin 建号/改密时置角色；不传则不动角色。

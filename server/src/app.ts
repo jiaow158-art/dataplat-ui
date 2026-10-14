@@ -186,13 +186,25 @@ export function createApp(store: BffStore, config: BffConfig): Express {
     }
     const token = randomBytes(16).toString("hex"); // 128bit 随机
     const now = Date.now();
+    // 竞态闭环：compare 是异步的，await 期间账号可能被管理员停用或重置密码（check-then-write
+    // 跨了 await）。写会话前同步复核一次——此后到事务提交无 await，复核与写入对其他请求原子：
+    // disabled 已置位 → 拒；password_hash 已变（重置过）→ 我们校验的是旧凭据 → 拒。
+    const fresh = store.getUser(username);
+    if (!fresh || fresh.disabled === 1 || fresh.password_hash !== user!.password_hash) {
+      const remain = loginMinFailMs - (Date.now() - start);
+      if (remain > 0) await sleep(remain);
+      return sendError(res, 401, "UNAUTHORIZED", "invalid username or password");
+    }
     store.pruneExpiredSessions(now);
-    // 单会话策略：同账号同时只允许一个活跃会话——新登录踢掉旧会话（旧页面下次请求 401
-    // 弹回登录屏）。先标旧 login_log 终态再记新登录，顺序保证新行不被误标。
-    store.deleteSessionsForUser(username);
-    store.markLogoutAllForUser(username, now);
-    store.createSession(token, username, now + SESSION_TTL_MS);
-    store.recordLogin(username, token.slice(0, 6), now, now + SESSION_TTL_MS); // M4-B6 旁路记账
+    // 单会话策略 + 事务边界：踢旧（sessions 删 + login_log 标终态）、建新（session 行 + 登录
+    // 记账）在一个事务内原子提交——同账号并发登录在同步块上天然串行（后到者整体顶替先到者），
+    // 事务兜住崩溃一致性（不留"旧已删、新未建"的中间态）。
+    store.tx(() => {
+      store.deleteSessionsForUser(username);
+      store.markLogoutAllForUser(username, now);
+      store.createSession(token, username, now + SESSION_TTL_MS);
+      store.recordLogin(username, token.slice(0, 6), now, now + SESSION_TTL_MS); // M4-B6 旁路记账
+    });
     res.cookie(SESSION_COOKIE, token, { httpOnly: true, sameSite: "lax", path: "/", maxAge: SESSION_TTL_MS });
     res.json({ username });
   });
@@ -300,13 +312,17 @@ export function createApp(store: BffStore, config: BffConfig): Express {
     if (password === null) return sendError(res, 400, "BAD_REQUEST", "password must be 8..128 chars");
     const target = store.getUser(req.params.name);
     if (!target) return sendError(res, 404, "NOT_FOUND", "user not found");
-    store.setPassword(target.username, await hash(password, 10));
-    // 改密即吊销该用户全部存量会话（账号疑似泄露/共享时重置密码的标准语义：旧 cookie 立即
-    // 失效）。管理员重置自己密码同样会被踢回登录屏——「改密后需重新登录」，disable 的防锁死
-    // 规则不适用此处。
-    store.deleteSessionsForUser(target.username);
-    store.markLogoutAllForUser(target.username, Date.now());
-    store.insertAdminAudit({ username: req.user!, action: "password_reset", target: target.username });
+    const newHash = await hash(password, 10);
+    // 改密 + 吊销 + 审计同一事务原子提交。改密即吊销该用户全部存量会话（账号疑似泄露/共享时
+    // 重置密码的标准语义：旧 cookie 立即失效）。管理员重置自己密码同样会被踢回登录屏——
+    // 「改密后需重新登录」，disable 的防锁死规则不适用此处。并发登录侧由登录写前复核
+    // password_hash 闭环（hash 已变 → 校验的是旧凭据 → 401）。
+    store.tx(() => {
+      store.setPassword(target.username, newHash);
+      store.deleteSessionsForUser(target.username);
+      store.markLogoutAllForUser(target.username, Date.now());
+      store.insertAdminAudit({ username: req.user!, action: "password_reset", target: target.username });
+    });
     res.json({ username: target.username });
   });
 
@@ -317,17 +333,22 @@ export function createApp(store: BffStore, config: BffConfig): Express {
     if (disabled && target.username === req.user) {
       return sendError(res, 400, "BAD_REQUEST", "cannot disable yourself");
     }
-    store.setDisabled(target.username, disabled);
-    if (disabled) {
-      // 停用即吊销：存量会话全部失效（配合门禁每请求回查 users.disabled 双保险——即使未来
-      // 有路径只改位不删会话，门禁也拦得住）。在途 SSE 流由看门狗掐断。
-      store.deleteSessionsForUser(target.username);
-      store.markLogoutAllForUser(target.username, Date.now());
-    }
-    store.insertAdminAudit({
-      username: req.user!,
-      action: disabled ? "user_disable" : "user_enable",
-      target: target.username,
+    // 状态变更 + 会话吊销 + 审计留痕同一事务原子提交：停用即时生效不留"位已置、会话还活"
+    // 或"会话已吊、审计缺失"的中间态（请求间单线程串行，事务兜崩溃一致性）。启用无会话
+    // 副作用，同形包事务保持路径一致。
+    store.tx(() => {
+      store.setDisabled(target.username, disabled);
+      if (disabled) {
+        // 停用即吊销：存量会话全部失效（配合门禁每请求回查 users.disabled 双保险——即使未来
+        // 有路径只改位不删会话，门禁也拦得住）。在途 SSE 流由看门狗掐断。
+        store.deleteSessionsForUser(target.username);
+        store.markLogoutAllForUser(target.username, Date.now());
+      }
+      store.insertAdminAudit({
+        username: req.user!,
+        action: disabled ? "user_disable" : "user_enable",
+        target: target.username,
+      });
     });
     res.json(toPublicUser(store.getUser(target.username)!));
   };
