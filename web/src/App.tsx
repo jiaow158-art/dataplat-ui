@@ -48,6 +48,15 @@ export default function App() {
       .catch(() => setBoot({ kind: "login" })); // 401/网络错 → 登录屏
   }, [enter]);
 
+  // 会话被吊销（停用/踢出/改密/单会话被新登录顶替）：任何 API 401 广播 → 弹回登录屏。
+  // boot 切 login 即卸载主视图（useTaskStream 的 EventSource 随 unmount 清理）；SSE 流被
+  // 服务端掐断后经 status 轮询 401 走同一链路。
+  useEffect(() => {
+    const onUnauthorized = () => setBoot({ kind: "login" });
+    window.addEventListener("bff-unauthorized", onUnauthorized);
+    return () => window.removeEventListener("bff-unauthorized", onUnauthorized);
+  }, []);
+
   const refreshSessions = useCallback(async () => {
     setSessions(await apiListSessions());
   }, []);

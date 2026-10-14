@@ -294,6 +294,11 @@ export class BffStore {
     return this.db.prepare("DELETE FROM sessions WHERE token = ?").run(token).changes > 0;
   }
 
+  /** 吊销某用户全部活跃会话（停用/改密/单会话踢旧的共用原语——idx_sessions_username 走索引）。 */
+  deleteSessionsForUser(username: string): number {
+    return this.db.prepare("DELETE FROM sessions WHERE username = ?").run(username).changes;
+  }
+
   /** 顺手清掉已过期行（登录时调用，免单开清扫任务）。 */
   pruneExpiredSessions(now: number): number {
     return this.db.prepare("DELETE FROM sessions WHERE expires_at < ?").run(now).changes;
@@ -317,6 +322,13 @@ export class BffStore {
                      ORDER BY created_at DESC, rowid DESC LIMIT 1)`,
       )
       .run(at, token.slice(0, 6)).changes > 0;
+  }
+
+  /** 被踢/被停用的批量终态：该用户全部存活 login_log 行置 logout_at（与 deleteSessionsForUser 配对使用）。 */
+  markLogoutAllForUser(username: string, at: number): number {
+    return this.db
+      .prepare("UPDATE login_log SET logout_at = ? WHERE username = ? AND logout_at IS NULL")
+      .run(at, username).changes;
   }
 
   /** 登录史查询（管理员端点用）：可选按用户过滤，新到旧。 */

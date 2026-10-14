@@ -45,9 +45,12 @@ test("生命周期：登出按 token 定位置 logout_at；未登出的行保持
   const app = await bff();
   const { hashSync } = await import("bcryptjs");
   app.store.upsertUser("zhang", hashSync("correct-horse-9", 10));
+  app.store.upsertUser("li", hashSync("correct-horse-9", 10));
 
-  const sidA = (await login(app.port, "zhang", "correct-horse-9")).sid!; // 存活不登出
-  const sidB = (await login(app.port, "zhang", "correct-horse-9")).sid!; // 随后登出
+  // 单会话策略下同账号第二次登录会顶替第一次（旧行标终态），故「存活的未登出会话」
+  // 用另一账号构造——登出定位只影响登出者本人、旁路行保留的语义不变。
+  const sidA = (await login(app.port, "zhang", "correct-horse-9")).sid!; // zhang 存活不登出
+  const sidB = (await login(app.port, "li", "correct-horse-9")).sid!; // li 随后登出
 
   assert.equal((await request(app.port, "POST", "/api/auth/logout", { cookie: `sid=${sidB}` })).status, 204);
 

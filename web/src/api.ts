@@ -56,6 +56,9 @@ async function api<T>(method: string, path: string, body?: unknown): Promise<T> 
     throw new ApiError(0, "NETWORK", "无法连接服务器，请稍后重试");
   }
   if (!res.ok) {
+    // 会话被吊销（停用/踢出/改密/单会话被新登录顶替）：广播给 App 弹回登录屏。错误照常抛出，
+    // 各调用方的展示逻辑不变。登录失败本身也是 401，但彼时已在登录屏，App 侧处理为幂等 no-op。
+    if (res.status === 401) window.dispatchEvent(new Event("bff-unauthorized"));
     let code = "HTTP_ERROR";
     let message = `请求失败（HTTP ${res.status}）`;
     try {

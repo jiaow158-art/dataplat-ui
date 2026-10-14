@@ -70,6 +70,8 @@ export interface BffConfig {
   titleGen?: (question: string) => Promise<string | null>;
   /** SCH-1 insight 管理面共享 token（env INSIGHT_ADMIN_TOKEN；未配置时 admin 代理 503）。 */
   insightAdminToken?: string;
+  /** SSE 代理会话看门狗复查间隔 ms（停用/踢出即时掐断在途流；默认 10s，测试可调小）。 */
+  sseWatchdogMs?: number;
 }
 
 const SESSION_COOKIE = "sid";
@@ -124,6 +126,7 @@ export function createApp(store: BffStore, config: BffConfig): Express {
   app.use(express.json({ limit: "1mb" }));
   const loginLimiter = new SlidingWindowLimiter(config.loginRatePerMin ?? 5);
   const loginMinFailMs = config.loginMinFailMs ?? 400;
+  const sseWatchdogMs = config.sseWatchdogMs ?? 10_000;
   const gateway = new GatewayClient(config.gatewayUrl, config.authToken);
   // P4 自动标题：生成器 + 同会话 in-flight 去重（边界 3：并发 ask 下同一 default 会话至多一次在途
   // 标题请求；完成即出队。Set 足矣，不做状态机）。
@@ -135,15 +138,26 @@ export function createApp(store: BffStore, config: BffConfig): Express {
     res.json({ ok: true });
   });
 
+  // 会话存活判定（单点）：token 未过期，且用户仍存在、未停用才算活——停用即时生效。
+  // 每请求回查 users 一次（与 admin 守卫同形；disabled 原先只在登录时读一次，导致停用后
+  // 存量会话还能撑到 7 天过期）。SSE 看门狗复用同一口径。
+  const sessionUser = (token: string | undefined): string | null => {
+    if (!token) return null;
+    const sess = store.findSession(token);
+    if (!sess || sess.expires_at <= Date.now()) return null;
+    const u = store.getUser(sess.username);
+    if (!u || u.disabled === 1) return null;
+    return sess.username;
+  };
+
   // 会话门禁：除 /api/auth/login 与 /api/health 外全部要求有效会话（spec §3）
   app.use("/api", (req, res, next) => {
     if (req.path === "/auth/login" || req.path === "/health") return next();
-    const token = parseCookies(req.headers.cookie)[SESSION_COOKIE];
-    const sess = token ? store.findSession(token) : undefined;
-    if (!sess || sess.expires_at <= Date.now()) {
+    const user = sessionUser(parseCookies(req.headers.cookie)[SESSION_COOKIE]);
+    if (!user) {
       return sendError(res, 401, "UNAUTHORIZED", "login required");
     }
-    req.user = sess.username;
+    req.user = user;
     next();
   });
 
@@ -173,6 +187,10 @@ export function createApp(store: BffStore, config: BffConfig): Express {
     const token = randomBytes(16).toString("hex"); // 128bit 随机
     const now = Date.now();
     store.pruneExpiredSessions(now);
+    // 单会话策略：同账号同时只允许一个活跃会话——新登录踢掉旧会话（旧页面下次请求 401
+    // 弹回登录屏）。先标旧 login_log 终态再记新登录，顺序保证新行不被误标。
+    store.deleteSessionsForUser(username);
+    store.markLogoutAllForUser(username, now);
     store.createSession(token, username, now + SESSION_TTL_MS);
     store.recordLogin(username, token.slice(0, 6), now, now + SESSION_TTL_MS); // M4-B6 旁路记账
     res.cookie(SESSION_COOKIE, token, { httpOnly: true, sameSite: "lax", path: "/", maxAge: SESSION_TTL_MS });
@@ -283,6 +301,11 @@ export function createApp(store: BffStore, config: BffConfig): Express {
     const target = store.getUser(req.params.name);
     if (!target) return sendError(res, 404, "NOT_FOUND", "user not found");
     store.setPassword(target.username, await hash(password, 10));
+    // 改密即吊销该用户全部存量会话（账号疑似泄露/共享时重置密码的标准语义：旧 cookie 立即
+    // 失效）。管理员重置自己密码同样会被踢回登录屏——「改密后需重新登录」，disable 的防锁死
+    // 规则不适用此处。
+    store.deleteSessionsForUser(target.username);
+    store.markLogoutAllForUser(target.username, Date.now());
     store.insertAdminAudit({ username: req.user!, action: "password_reset", target: target.username });
     res.json({ username: target.username });
   });
@@ -295,6 +318,12 @@ export function createApp(store: BffStore, config: BffConfig): Express {
       return sendError(res, 400, "BAD_REQUEST", "cannot disable yourself");
     }
     store.setDisabled(target.username, disabled);
+    if (disabled) {
+      // 停用即吊销：存量会话全部失效（配合门禁每请求回查 users.disabled 双保险——即使未来
+      // 有路径只改位不删会话，门禁也拦得住）。在途 SSE 流由看门狗掐断。
+      store.deleteSessionsForUser(target.username);
+      store.markLogoutAllForUser(target.username, Date.now());
+    }
     store.insertAdminAudit({
       username: req.user!,
       action: disabled ? "user_disable" : "user_enable",
@@ -1069,6 +1098,17 @@ export function createApp(store: BffStore, config: BffConfig): Express {
     res.flushHeaders();
 
     const parser = new SseFrameParser();
+    // 会话吊销看门狗：SSE 连接只在建连时过一次门禁，停用/踢出/改密若只拦新请求，在途流仍会
+    // 跑完——周期性复查登录态（与门禁同口径），失效即掐断上下游（客户端 EventSource CLOSED →
+    // 轮询 status 得 401 → 前端弹回登录屏）。同账号被新登录顶替时旧 token 已删，同样命中。
+    const sidToken = parseCookies(req.headers.cookie)[SESSION_COOKIE];
+    const watchdog = setInterval(() => {
+      if (sessionUser(sidToken) !== user) {
+        clearInterval(watchdog);
+        stream.abort();
+        if (!res.writableEnded) res.end();
+      }
+    }, sseWatchdogMs);
     upstream.on("data", (chunk: Buffer) => {
       try {
         for (const ev of parser.feed(chunk)) recordMessageEvent(runId, ev);
@@ -1079,11 +1119,13 @@ export function createApp(store: BffStore, config: BffConfig): Express {
     upstream.pipe(res); // 逐 chunk 写出 + 背压；上游 end → res.end()（done 后关流语义）
     upstream.on("error", (err) => {
       console.error(`[sse] 上游流异常 run_id=${runId}:`, err);
+      clearInterval(watchdog);
       stream.abort();
       if (!res.writableEnded) res.end(); // 客户端按 seq 重连恢复（D15）
     });
-    // 客户端断开 → 销毁上游连接（上游未结束时才有意义）
+    // 客户端断开 → 销毁上游连接（上游未结束时才有意义）；正常关流（done→end）也经此收尾看门狗
     res.on("close", () => {
+      clearInterval(watchdog);
       if (!upstream.readableEnded) stream.abort();
     });
   });
