@@ -44,19 +44,34 @@ function tempDir(): { root: string; open(): Database.Database; done(): void } {
   };
 }
 
-test("flag CLI：list 空表不炸；on/off 置 user_flags；未知用户 exit 1 不落行；非法用法 exit 2", async () => {
+test("flag CLI：list 空表不炸；建号默认 ON；on/off 置 user_flags；未知用户 exit 1 不落行；非法用法 exit 2", async () => {
   const dir = tempDir();
   try {
-    // 建号走 admin:add 通道（CLI 间互操作，与 admin-cli 测试同型）
-    const add = await runCli(["admin:add", "boss"], dir.root, "cli-pass-123\ncli-pass-123\n", "src/admin-cli.ts");
-    assert.equal(add.code, 0, `建号 exit 0（stderr=${add.stderr}）`);
-
-    // list：空表 exit 0 不炸
+    // list：空表 exit 0 不炸（必须建号前测——建号即播种默认 ON 行）
     const empty = await runCli(["list"], dir.root);
     assert.equal(empty.code, 0, `空表 list exit 0（stderr=${empty.stderr}）`);
     assert.match(empty.stdout, /no flags/);
 
-    // on：exit 0 且 user_flags 落 enabled=1
+    // 建号走 admin:add 通道（CLI 间互操作，与 admin-cli 测试同型）
+    const add = await runCli(["admin:add", "boss"], dir.root, "cli-pass-123\ncli-pass-123\n", "src/admin-cli.ts");
+    assert.equal(add.code, 0, `建号 exit 0（stderr=${add.stderr}）`);
+
+    // 建号即默认 ON（2026-10-09 内网开放裁定）：list 显示 boss on，库内 enabled=1
+    const seeded = await runCli(["list"], dir.root);
+    assert.equal(seeded.code, 0);
+    assert.match(seeded.stdout, /boss\ton\t/, "建号后 list 应显示 boss on（默认 ON 播种）");
+    const dbSeed = dir.open();
+    try {
+      assert.equal(
+        (dbSeed.prepare("SELECT enabled FROM user_flags WHERE username = 'boss' AND flag = 'insight_cockpit'").get() as any).enabled,
+        1,
+        "建号播种 enabled=1",
+      );
+    } finally {
+      dbSeed.close();
+    }
+
+    // on：幂等重申，exit 0 且仍 enabled=1
     const on = await runCli(["on", "boss"], dir.root);
     assert.equal(on.code, 0, `on exit 0（stderr=${on.stderr}）`);
     const db = dir.open();
@@ -70,7 +85,7 @@ test("flag CLI：list 空表不炸；on/off 置 user_flags；未知用户 exit 1
       db.close();
     }
 
-    // off：exit 0 且 enabled=0
+    // off：exit 0 且 enabled=0（显式 OFF 有效）
     const off = await runCli(["off", "boss"], dir.root);
     assert.equal(off.code, 0, `off exit 0（stderr=${off.stderr}）`);
     const dbOff = dir.open();

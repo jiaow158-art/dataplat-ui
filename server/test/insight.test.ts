@@ -4,18 +4,18 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { startBff, startMockGateway, request, login, hashPw } from "./helpers.ts";
 
-test("user_flags 默认关闭，setFlag 幂等切换", async () => {
+test("user_flags 建号默认 ON，显式 OFF/重新 ON，setFlag 幂等（2026-10-09 内网开放裁定）", async () => {
   const bff = await startBff();
   try {
     bff.store.upsertUser("u1", hashPw("pw"));
-    assert.equal(bff.store.insightEnabled("u1"), false); // 默认关
+    assert.equal(bff.store.insightEnabled("u1"), true); // 建号默认 ON（upsertUser 建号即播种）
+    bff.store.setFlag("u1", "insight_cockpit", false);
+    assert.equal(bff.store.insightEnabled("u1"), false); // 显式 OFF 有效
     bff.store.setFlag("u1", "insight_cockpit", true);
-    assert.equal(bff.store.insightEnabled("u1"), true);
+    assert.equal(bff.store.insightEnabled("u1"), true); // 重新 ON
     bff.store.setFlag("u1", "insight_cockpit", true); // 幂等
     assert.equal(bff.store.insightEnabled("u1"), true);
-    bff.store.setFlag("u1", "insight_cockpit", false);
-    assert.equal(bff.store.insightEnabled("u1"), false);
-    assert.equal(bff.store.insightEnabled("nobody"), false); // 未知用户=关
+    assert.equal(bff.store.insightEnabled("nobody"), false); // 未知用户（无账号无行）=关
   } finally {
     await bff.close();
   }
@@ -53,6 +53,7 @@ test("enabled/daily/events/timeline 代理与 flag 门禁", async (t) => {
     const li = await login(bff.port, "u1", "pw");
 
     await t.test("未开 flag → 全部 403 FLAG_OFF；enabled 端点不受门禁", async () => {
+      bff.store.setFlag("u1", "insight_cockpit", false); // 建号默认 ON——测"关"须显式 OFF
       const r = await request(bff.port, "GET", "/api/insight/daily", { cookie: `sid=${li.sid}` });
       assert.equal(r.status, 403);
       assert.equal(r.body.error.code, "FLAG_OFF");
@@ -106,6 +107,7 @@ test("M-i7 target-overview：未开 flag 403；开 flag 代理透传", async () 
   const bff = await startBff({ insightUrl: insight.url });
   try {
     bff.store.upsertUser("u1", hashPw("pw"));
+    bff.store.setFlag("u1", "insight_cockpit", false); // 建号默认 ON——显式 OFF 后测 403
     const li = await login(bff.port, "u1", "pw");
     const r403 = await request(bff.port, "GET", "/api/insight/target-overview", { cookie: `sid=${li.sid}` });
     assert.equal(r403.status, 403);
@@ -140,6 +142,7 @@ test("M-i8 region-map：未开 flag 403；开 flag 代理透传", async () => {
   const bff = await startBff({ insightUrl: insight.url });
   try {
     bff.store.upsertUser("u1", hashPw("pw"));
+    bff.store.setFlag("u1", "insight_cockpit", false); // 建号默认 ON——显式 OFF 后测 403
     const li = await login(bff.port, "u1", "pw");
     const r403 = await request(bff.port, "GET", "/api/insight/region-map", { cookie: `sid=${li.sid}` });
     assert.equal(r403.status, 403);
@@ -180,6 +183,7 @@ test("M-i5 四新端点：未开 flag 403；开 flag 代理透传", async () => 
   const bff = await startBff({ insightUrl: insight.url });
   try {
     bff.store.upsertUser("u1", hashPw("pw"));
+    bff.store.setFlag("u1", "insight_cockpit", false); // 建号默认 ON——显式 OFF 后测 403
     const li = await login(bff.port, "u1", "pw");
     const paths = [
       "/api/insight/health-score",
@@ -218,6 +222,61 @@ test("M-i5 四新端点：未开 flag 403；开 flag 代理透传", async () => 
     ]) {
       assert.ok(insight.requests.some((q) => q.url === up), `upstream missing ${up}`);
     }
+  } finally {
+    await bff.close();
+    await insight.close();
+  }
+});
+
+test("新用户默认 ON：enabled=true，驾驶舱端点直接放行透传（2026-10-09 内网开放裁定）", async () => {
+  const insight = await startMockGateway((req, res) => {
+    if (req.url === "/api/insight/daily") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ briefDate: "2026-10-16", eventCount: 0, events: [], stale: false, scope: "瓷砖事业部" }));
+      return;
+    }
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "NOT_FOUND" }));
+  });
+  const bff = await startBff({ insightUrl: insight.url });
+  try {
+    bff.store.upsertUser("fresh", hashPw("pw"));
+    const li = await login(bff.port, "fresh", "pw");
+    const e = await request(bff.port, "GET", "/api/insight/enabled", { cookie: `sid=${li.sid}` });
+    assert.equal(e.status, 200);
+    assert.deepEqual(e.body, { enabled: true }); // 默认 ON，无需任何 CLI 操作
+    const r = await request(bff.port, "GET", "/api/insight/daily", { cookie: `sid=${li.sid}` });
+    assert.equal(r.status, 200); // gate 放行 → 代理透传
+    assert.equal(r.body.briefDate, "2026-10-16");
+    assert.ok(insight.requests.some((q) => q.url === "/api/insight/daily"));
+  } finally {
+    await bff.close();
+    await insight.close();
+  }
+});
+
+test("flag 用户隔离：显式 OFF 只影响本人，他人默认 ON 不受影响", async () => {
+  const insight = await startMockGateway((req, res) => {
+    if (req.url === "/api/insight/daily") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ briefDate: "2026-10-16", eventCount: 0, events: [], stale: false }));
+      return;
+    }
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "NOT_FOUND" }));
+  });
+  const bff = await startBff({ insightUrl: insight.url });
+  try {
+    bff.store.upsertUser("off-guy", hashPw("pw"));
+    bff.store.upsertUser("on-guy", hashPw("pw"));
+    bff.store.setFlag("off-guy", "insight_cockpit", false); // 仅 off-guy 显式关
+    const lOff = await login(bff.port, "off-guy", "pw");
+    const lOn = await login(bff.port, "on-guy", "pw");
+    const rOff = await request(bff.port, "GET", "/api/insight/daily", { cookie: `sid=${lOff.sid}` });
+    assert.equal(rOff.status, 403);
+    assert.equal(rOff.body.error.code, "FLAG_OFF");
+    const rOn = await request(bff.port, "GET", "/api/insight/daily", { cookie: `sid=${lOn.sid}` });
+    assert.equal(rOn.status, 200); // 他人不受影响
   } finally {
     await bff.close();
     await insight.close();

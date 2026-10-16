@@ -36,8 +36,13 @@ async function setup(flagOn = true) {
   bff.store.upsertUser("boss", hashPw("pw-boss-12345"), { isAdmin: true });
   bff.store.upsertUser("staff", hashPw("pw-staff-12345"));
   if (flagOn) {
+    // 建号已默认 ON（2026-10-09 裁定）——显式重申幂等，保持用例自述清晰
     bff.store.setFlag("boss", "insight_cockpit", true);
     bff.store.setFlag("staff", "insight_cockpit", true);
+  } else {
+    // 测"flag 关闭时管理面 403（gate 前置）"必须显式 OFF——否则建号默认 ON 会放行 gate
+    bff.store.setFlag("boss", "insight_cockpit", false);
+    bff.store.setFlag("staff", "insight_cockpit", false);
   }
   const bossSid = (await login(bff.port, "boss", "pw-boss-12345")).sid!;
   const staffSid = (await login(bff.port, "staff", "pw-staff-12345")).sid!;
