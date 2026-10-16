@@ -78,13 +78,32 @@ test("generateTitle：非 200 / 网络异常 / 超时 → null（宁缺毋滥，
     throw new Error("ECONNRESET");
   }) as typeof fetch;
   assert.equal(await generateTitle("q"), null);
+  // 超时段：AbortSignal.timeout 受控替身。真实 8s 定时器是 unref 的、不保活事件循环——
+  // stub fetch 只挂 abort 监听时，Linux node:test 会以 "Promise resolution is still
+  // pending but the event loop has already resolved" 判 cancelled。替身由本测试确定性
+  // 触发 abort 路径（零真实等待），并断言监听器确实收到 abort、generateTitle 落到 null。
+  const realTimeout = AbortSignal.timeout;
+  const ctrl = new AbortController();
+  let abortReached = false;
+  AbortSignal.timeout = ((_ms: number) => ctrl.signal) as typeof AbortSignal.timeout;
   globalThis.fetch = (async (_u: unknown, init?: { signal?: AbortSignal }) => {
     return new Promise((_res, rej) => {
-      init?.signal?.addEventListener("abort", () => rej(init.signal!.reason));
+      init?.signal?.addEventListener("abort", () => {
+        abortReached = true;
+        rej(init.signal!.reason);
+      });
     });
   }) as typeof fetch;
-  assert.equal(await generateTitle("q"), null); // AbortSignal.timeout 触发（默认立即进入等待）
-  globalThis.fetch = realFetch;
+  try {
+    const pending = generateTitle("q");
+    await new Promise((r) => setImmediate(r)); // 微任务排空：fetch 已调用、abort 监听已挂
+    ctrl.abort(); // 受控"时钟到点"——确定性触发
+    assert.equal(await pending, null, "abort 路径触发 → 宁缺毋滥返回 null");
+    assert.ok(abortReached, "fetch 的 abort 监听确实被触发");
+  } finally {
+    AbortSignal.timeout = realTimeout;
+    globalThis.fetch = realFetch;
+  }
 });
 
 test("generateTitle：请求体形态——system+user 双消息、max_tokens 上限（成本围栏）", async () => {
