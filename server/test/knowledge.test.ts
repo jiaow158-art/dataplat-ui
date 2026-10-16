@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { execFile, spawnSync } from "node:child_process";
 import { promisify } from "node:util";
 import Database from "better-sqlite3";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,8 +18,25 @@ import { hashPw, login, request, startBff, type BffHandle } from "./helpers.ts";
 
 const SERVER_DIR = join(dirname(fileURLToPath(import.meta.url)), "..");
 const execFileAsync = promisify(execFile);
-/** 真发布脚本（harness 仓）——fixture 里按生产布局复制到 <fixture>/scripts/ 下。 */
-const REAL_HARNESS = resolve(SERVER_DIR, "..", "..", "dataprojai-2harness");
+/** 定位 harness 仓（真发布脚本/真钩子来源）：env 覆盖 > 同级名探测。
+ *  Windows 开发布局 = dataplat-ui 与 dataprojai-2harness 同级；Linux 部署布局 =
+ *  /srv/dpit/apps/{dataplat-ui,harness} 同级。两名字 + HARNESS_TEST_DIR 覆盖，
+ *  不要求 Linux 建任何 symlink。按 knowledge-publish.mjs 存在性校验命中。 */
+function resolveRealHarness(): string {
+  const candidates = [
+    process.env.HARNESS_TEST_DIR, // 显式覆盖（CI/异构布局）
+    resolve(SERVER_DIR, "..", "..", "dataprojai-2harness"), // Windows 开发默认
+    resolve(SERVER_DIR, "..", "..", "harness"), // Linux 部署默认（/srv/dpit/apps/harness）
+  ].filter((p): p is string => typeof p === "string" && p.length > 0);
+  for (const c of candidates) {
+    if (existsSync(join(c, "scripts", "knowledge-publish.mjs"))) return c;
+  }
+  throw new Error(
+    `[knowledge.test] 未找到 harness 仓（探测：${candidates.join(" ; ")}）——` +
+      `请设 HARNESS_TEST_DIR 指向 harness 仓根（含 scripts/knowledge-publish.mjs）`,
+  );
+}
+const REAL_HARNESS = resolveRealHarness();
 const REAL_SCRIPT = join(REAL_HARNESS, "scripts", "knowledge-publish.mjs");
 const REAL_HOOKS = join(REAL_HARNESS, ".githooks");
 
