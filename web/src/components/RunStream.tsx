@@ -6,7 +6,7 @@
 //   运行态 AnalysisStatus 只显业务阶段 + 已完成计数，不显「第 N 项」——边界3。
 // 普通经营用户默认全程不见 SQL/工具日志；反馈闭环（§三B）保留。
 import { useEffect, useState } from "react";
-import { useTaskStream, type SqlRecord, type StreamState } from "../hooks/useTaskStream";
+import { recoveryNoticeText, useTaskStream, type SqlRecord, type StreamState } from "../hooks/useTaskStream.ts";
 import AnswerCard from "./AnswerCard";
 import FeedbackControl from "./FeedbackControl";
 import ReportCard from "./ReportCard";
@@ -51,7 +51,15 @@ export default function RunStream({ runId, question, startedAt, uiSessionId, isA
       {/* 过程区：运行期间占主视觉；answer 到达后退居答案之下 */}
       <ProcessBlock s={s} isAdmin={isAdmin} doneCount={doneCount} elapsedMs={elapsedMs} />
 
-      {s.error && <ErrorBar code={s.error.code} message={s.error.message} onRetry={() => onRetry(question)} />}
+      {s.recoveryRequired && <RecoveryNotice s={s} />}
+
+      {s.error && (
+        <ErrorBar
+          code={s.error.code}
+          message={s.error.message}
+          onRetry={s.recoveryRequired ? undefined : () => onRetry(question)}
+        />
+      )}
       {s.terminal && s.answer && <FeedbackControl runId={runId} uiSessionId={uiSessionId} />}
     </div>
   );
@@ -62,6 +70,8 @@ export default function RunStream({ runId, question, startedAt, uiSessionId, isA
 function ProcessBlock({ s, isAdmin, doneCount, elapsedMs }: { s: StreamState; isAdmin: boolean; doneCount: number; elapsedMs: number | null }) {
   const [showProcess, setShowProcess] = useState(false);
   const [showTech, setShowTech] = useState(false);
+  // recovery 由独立 RecoveryNotice 承载；不显示运行中 spinner，也不落“分析完成”。
+  if (s.recoveryRequired) return null;
   const running = !s.terminal;
   const failed = s.error != null || s.done?.status === "failed";
 
@@ -263,20 +273,33 @@ function SqlBar({ index, rec }: { index: number; rec: SqlRecord }) {
   );
 }
 
-function ErrorBar(props: { code: string; message: string; onRetry: () => void }) {
+function RecoveryNotice({ s }: { s: StreamState }) {
+  const text = recoveryNoticeText(s);
+  return (
+    <div className="rounded-lg border border-ck-warning/40 bg-ck-warning-soft px-4 py-3 text-xs">
+      <div className="font-medium text-ck-warning">{text.title}</div>
+      <div className="mt-1 text-ck-ink-2">{text.detail}</div>
+      <div className="mt-1 text-ck-ink-3">系统会自动查询任务状态；恢复完成后可继续查看结果。</div>
+    </div>
+  );
+}
+
+function ErrorBar(props: { code: string; message: string; onRetry?: () => void }) {
   return (
     <div className="flex items-start justify-between gap-3 rounded-lg border border-ck-danger/40 bg-ck-danger-soft px-4 py-3 text-xs">
       <div>
         <div className="font-medium text-ck-danger">任务失败 · {props.code}</div>
         <div className="mt-0.5 text-ck-ink-2">{props.message}</div>
       </div>
-      <button
-        type="button"
-        className="shrink-0 rounded border border-ck-danger/50 px-2.5 py-1 text-xs text-ck-danger hover:bg-ck-danger/20"
-        onClick={props.onRetry}
-      >
-        重新提问
-      </button>
+      {props.onRetry && (
+        <button
+          type="button"
+          className="shrink-0 rounded border border-ck-danger/50 px-2.5 py-1 text-xs text-ck-danger hover:bg-ck-danger/20"
+          onClick={props.onRetry}
+        >
+          重新提问
+        </button>
+      )}
     </div>
   );
 }

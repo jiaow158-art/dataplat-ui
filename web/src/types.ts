@@ -34,6 +34,8 @@ export interface TaskStatus {
   attempt: number;
   error_code: string | null;
   created_at: number;
+  /** Linux isolated cleanup 仍在等待资源恢复；仅在网关该状态下出现。 */
+  recovery_required?: boolean;
 }
 
 // ── 管理后台（M4-B2/B3/B4；对齐 server/src/app.ts admin 端点响应形态）─────────────────

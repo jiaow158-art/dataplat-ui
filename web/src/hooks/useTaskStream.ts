@@ -1,11 +1,17 @@
 // UI-T6：单任务 SSE 消费状态机（契约 §4 SSE 语义、§6 六类事件词表）。
 // 每个使用中的 run 一份实例（组件局部状态）——多标签页各开各的 EventSource，无共享可变全局。
 // 断线语义：浏览器原生 EventSource 自动重连并带 Last-Event-ID，网关补发 seq>after 的历史，
-// 不重不漏（D15）——客户端只显示"重连中"，不自己去重。流静默结束（reaper 终态无 done 事件）
-// 由周期性 GET /api/tasks/:id/status 兜底判终态。
+// 不重不漏（D15）——客户端只显示"重连中"，不自己去重。
+//
+// S4-B2-C2-B2-3-UI：cleanup recovery 兼容：
+//   - CLEANUP_RECOVERY_REQUIRED 不是业务 terminal，不触发 onTerminal，不自动 retry；
+//   - 收到该 error 后关闭 EventSource，改由低频 GET 观察真实状态；
+//   - 204/CLOSED 不无限重连，GET 会确认是否仍 recovery；
+//   - failed/cancelled done 后主动 GET 一次，读取可选 recovery_required；
+//   - hold 解除且任务继续运行后，用真实 last seq（绝不用合成 id）重建事件流。
 import { useEffect, useRef, useState } from "react";
-import { apiTaskStatus } from "../api";
-import type { TaskStatus } from "../types";
+import { apiTaskStatus } from "../api.ts";
+import type { TaskStatus } from "../types.ts";
 
 /** 契约 §6 stage 词表 → UI 文案（ queued 为网关状态机词，一并映射）。 */
 export const STAGE_TEXT: Record<string, string> = {
@@ -39,9 +45,11 @@ export interface DoneInfo {
   recovered: boolean;
 }
 
+export type StreamConnection = "connecting" | "open" | "reconnecting" | "recovering";
+
 export interface StreamState {
   /** 事件流连接面。 */
-  conn: "connecting" | "open" | "reconnecting";
+  conn: StreamConnection;
   stage: string | null;
   stageText: string | null; // 事件自带 text 优先，否则词表映射
   attempt: number;
@@ -50,11 +58,14 @@ export interface StreamState {
   timeline: StageMark[];
   answer: string | null;
   reportPath: string | null;
+  /** 真实业务错误；cleanup recovery 不写入这里，避免误显示“未知错误”。 */
   error: { code: string; message: string } | null;
   done: DoneInfo | null;
-  /** 终态（done/error 事件，或 status 兜底判定）。 */
+  /** 真实业务终态（done/error 事件，或 GET status 兜底判定）。 */
   terminal: boolean;
   terminalFromStatus: boolean; // true = 未见 done 事件、由 GET status 收尾（可提示过程不完整）
+  /** 资源清理尚未确认，等待人工恢复；独立于业务 terminal。 */
+  recoveryRequired: boolean;
 }
 
 const initialState = (): StreamState => ({
@@ -70,191 +81,454 @@ const initialState = (): StreamState => ({
   done: null,
   terminal: false,
   terminalFromStatus: false,
+  recoveryRequired: false,
 });
 
 /** 六类事件名。与原生 EventSource 的 error（连接错误）同名冲突，靠 data 是否为 string 区分。 */
 const EVENT_TYPES = ["stage", "sql", "answer", "report", "done", "error"] as const;
 
-export function useTaskStream(runId: string, onTerminal?: () => void): StreamState {
-  const [state, setState] = useState<StreamState>(initialState);
-  const stateRef = useRef<StreamState>(initialState());
-  const esRef = useRef<EventSource | null>(null);
-  const onTerminalRef = useRef(onTerminal);
+/** 与 Gateway `CLEANUP_RECOVERY_SSE_CODE` 同值；只在 UI 做语义分派，不泄漏到文案。 */
+export const CLEANUP_RECOVERY_CODE = "CLEANUP_RECOVERY_REQUIRED";
 
-  useEffect(() => {
-    const fresh = initialState();
-    stateRef.current = fresh;
-    setState(fresh);
-    if (!runId) return;
-    // 终态双确认：status 兜底轮询连续两轮都是终态才收尾——避开"任务刚 done、
-    // 事件帧还在路上"的竞态（真 done/error 事件到达时会覆盖并清掉 fromStatus 标记）。
-    let statusTerminalSeen = false;
-    let statusFailures = 0;
+/**
+ * Gateway 合成 SSE 游标保留区下界。UI 只用它区分“真实事件 seq”与 recovery 通知游标；
+ * 绝不把保留区 id 作为 after/+1/业务游标。真实 seq 远低于该值（契约 §4.1）。
+ */
+export const SYNTHETIC_SSE_ID_MIN = 1_000_000_000;
 
-    const es = new EventSource(`/api/tasks/${encodeURIComponent(runId)}/events`);
-    // 事件分发点同步维护 ref（批处理内连续事件不丢；绝不在渲染期调用）
-    const patch = (p: Partial<StreamState>) => {
-      const next = { ...stateRef.current, ...p };
-      stateRef.current = next;
-      setState(next);
+/** 历史侧仅对可能有 cleanup recovery 的业务终态补查 GET。 */
+export function shouldQueryHistoricalRecovery(status: string): boolean {
+  return status === "failed" || status === "cancelled";
+}
+
+/** Recovery 独立提示文案：业务终态与资源恢复并存时两条信息都不丢失。 */
+export function recoveryNoticeText(s: Pick<StreamState, "done" | "terminal">): {
+  title: string;
+  detail: string;
+} {
+  const businessStatus = s.done?.status;
+  const businessEnded =
+    businessStatus === "failed"
+      ? "业务任务已结束（失败）"
+      : businessStatus === "cancelled"
+        ? "业务任务已结束（已取消）"
+        : s.terminal
+          ? "业务任务已结束"
+          : null;
+  return {
+    title: "任务中断，等待恢复",
+    detail: businessEnded ? `${businessEnded}；资源仍待恢复。` : "资源仍待恢复，暂不可重试。",
+  };
+}
+
+const STATUS_POLL_MS = 8_000;
+const ES_CLOSED = 2;
+const TERMINAL_STATUS = new Set(["succeeded", "failed", "cancelled"]);
+
+export interface StreamEventSource {
+  addEventListener(type: string, listener: (event: MessageEvent) => void): void;
+  close(): void;
+  onopen: (() => void) | null;
+  readonly readyState: number;
+}
+
+export interface TaskStreamControllerOptions {
+  runId: string;
+  onState: (state: StreamState) => void;
+  fetchStatus: (runId: string) => Promise<TaskStatus>;
+  createEventSource?: (url: string) => StreamEventSource;
+  pollIntervalMs?: number;
+  setTimeoutFn?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
+  clearTimeoutFn?: (handle: ReturnType<typeof setTimeout>) => void;
+}
+
+/**
+ * 纯控制器：不依赖 React/DOM，便于用假 EventSource/GET/计时器测试生命周期。
+ * useTaskStream 只负责把 onState 映射到 React state。
+ */
+export class TaskStreamController {
+  private readonly runId: string;
+  private readonly onState: (state: StreamState) => void;
+  private readonly fetchStatus: (runId: string) => Promise<TaskStatus>;
+  private readonly createEventSource: (url: string) => StreamEventSource;
+  private readonly pollIntervalMs: number;
+  private readonly setTimeoutFn: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
+  private readonly clearTimeoutFn: (handle: ReturnType<typeof setTimeout>) => void;
+  private stateValue: StreamState = initialState();
+  private disposed = false;
+  private es: StreamEventSource | null = null;
+  private pollTimer: ReturnType<typeof setTimeout> | null = null;
+  private pollInFlight = false;
+  private statusFailures = 0;
+  private statusTerminalSeen = false;
+  private lastRealSeq = 0;
+  private readonly seenIds = new Set<string>();
+
+  constructor(opts: TaskStreamControllerOptions) {
+    this.runId = opts.runId;
+    this.onState = opts.onState;
+    this.fetchStatus = opts.fetchStatus;
+    this.createEventSource =
+      opts.createEventSource ?? ((url: string) => new EventSource(url) as unknown as StreamEventSource);
+    this.pollIntervalMs = opts.pollIntervalMs ?? STATUS_POLL_MS;
+    this.setTimeoutFn = opts.setTimeoutFn ?? ((fn, ms) => setTimeout(fn, ms));
+    this.clearTimeoutFn = opts.clearTimeoutFn ?? ((handle) => clearTimeout(handle));
+  }
+
+  get state(): StreamState {
+    return this.stateValue;
+  }
+
+  start(): void {
+    if (this.disposed) return;
+    this.openStream(null);
+    this.schedulePoll(this.pollIntervalMs);
+  }
+
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.clearPoll();
+    this.closeStream();
+  }
+
+  private patch(partial: Partial<StreamState>): void {
+    if (this.disposed) return;
+    const next = { ...this.stateValue, ...partial };
+    this.stateValue = next;
+    this.onState(next);
+  }
+
+  private openStream(afterSeq: number | null): void {
+    if (this.disposed) return;
+    this.closeStream();
+    const suffix = afterSeq === null ? "" : `?after=${afterSeq}`;
+    const url = `/api/tasks/${encodeURIComponent(this.runId)}/events${suffix}`;
+    let es: StreamEventSource;
+    try {
+      es = this.createEventSource(url);
+    } catch {
+      this.patch({ conn: "reconnecting" });
+      return;
+    }
+    this.es = es;
+    for (const type of EVENT_TYPES) {
+      es.addEventListener(type, (ev) => this.handleEvent(type, ev));
+    }
+    es.onopen = () => {
+      if (!this.disposed && this.es === es) this.patch({ conn: "open" });
     };
+    this.patch({ conn: "connecting" });
+  }
 
-    const finalizeFromStatus = (st: TaskStatus) => {
-      const cur = stateRef.current;
-      if (cur.terminal) return;
-      if (st.status !== "succeeded" && st.status !== "failed" && st.status !== "cancelled") {
-        statusTerminalSeen = false;
-        return;
+  private closeStream(): void {
+    if (!this.es) return;
+    try {
+      this.es.close();
+    } catch {
+      /* already closed */
+    }
+    this.es = null;
+  }
+
+  private schedulePoll(ms: number): void {
+    if (this.disposed) return;
+    if (this.stateValue.terminal && !this.stateValue.recoveryRequired) return;
+    this.clearPoll();
+    this.pollTimer = this.setTimeoutFn(() => {
+      this.pollTimer = null;
+      void this.pollStatusOnce();
+    }, ms);
+  }
+
+  private clearPoll(): void {
+    if (this.pollTimer === null) return;
+    this.clearTimeoutFn(this.pollTimer);
+    this.pollTimer = null;
+  }
+
+  private handleEvent(type: string, ev: MessageEvent): void {
+    if (this.disposed) return;
+    if (type === "error" && typeof ev.data !== "string") {
+      this.handleNativeError();
+      return;
+    }
+    let payload: any;
+    try {
+      payload = JSON.parse(String(ev.data));
+    } catch {
+      return; // 非 JSON payload 忽略
+    }
+
+    const rawId = ev.lastEventId;
+    const sid = typeof rawId === "string" ? rawId : "";
+    if (sid) {
+      if (this.seenIds.has(sid)) return;
+      this.seenIds.add(sid);
+      const seq = Number(sid);
+      if (Number.isSafeInteger(seq) && seq >= 0 && seq < SYNTHETIC_SSE_ID_MIN) {
+        this.lastRealSeq = Math.max(this.lastRealSeq, seq);
       }
-      if (!statusTerminalSeen) {
-        statusTerminalSeen = true; // 第一轮只记账，给在途的 done/error 事件帧留一个轮询周期
-        return;
-      }
-      if (st.status === "succeeded" || st.status === "cancelled") {
-        patch({ done: { status: st.status, elapsedMs: null, tokens: null, recovered: false }, terminal: true, terminalFromStatus: true });
-      } else {
-        patch({
-          error: { code: st.error_code ?? "ENGINE_ERROR", message: "任务执行失败（未收到失败详情事件）" },
-          terminal: true,
-          terminalFromStatus: true,
+    }
+
+    const cur = this.stateValue;
+    switch (type) {
+      case "stage": {
+        const stage = typeof payload.stage === "string" ? payload.stage : "";
+        const text =
+          typeof payload.text === "string" && payload.text
+            ? payload.text
+            : (STAGE_TEXT[stage] ?? stage);
+        this.patch({
+          stage,
+          stageText: text,
+          attempt: typeof payload.attempt === "number" ? payload.attempt : cur.attempt,
+          timeline: [
+            ...cur.timeline,
+            { stage, text: typeof payload.text === "string" ? payload.text : null },
+          ],
         });
+        break;
       }
-    };
-
-    const pollStatus = async () => {
-      try {
-        statusFailures = 0;
-        finalizeFromStatus(await apiTaskStatus(runId));
-      } catch {
-        // BFF/网关不可达：连续两轮失败即视为连接面故障（半开 TCP 下 EventSource 不会立刻
-        // onerror），提示"重连中"；恢复后由重连补发或本轮询收尾。
-        statusFailures += 1;
-        if (statusFailures >= 2 && !stateRef.current.terminal) patch({ conn: "reconnecting" });
-      }
-    };
-
-    const handle = (type: string, raw: unknown) => {
-      let p: any;
-      try {
-        p = JSON.parse(String(raw));
-      } catch {
-        return; // 非 JSON payload 忽略
-      }
-      const cur = stateRef.current;
-      switch (type) {
-        case "stage": {
-          const stage = typeof p.stage === "string" ? p.stage : "";
-          const text = typeof p.text === "string" && p.text ? p.text : (STAGE_TEXT[stage] ?? stage);
-          patch({
-            stage,
-            stageText: text,
-            attempt: typeof p.attempt === "number" ? p.attempt : cur.attempt,
-            // 原始 text（非词表兜底值）入轨迹：层3 工具行展示用
-            timeline: [...cur.timeline, { stage, text: typeof p.text === "string" ? p.text : null }],
-          });
-          break;
-        }
-        case "sql":
-          patch({
-            sqls: [
-              ...cur.sqls,
-              {
-                sql: typeof p.sql === "string" ? p.sql : "",
-                rows: typeof p.rows === "number" ? p.rows : null,
-                truncated: p.truncated === true,
-                elapsedMs: typeof p.elapsed_ms === "number" ? p.elapsed_ms : null,
-              },
-            ],
-          });
-          break;
-        case "answer":
-          if (typeof p.markdown === "string") patch({ answer: p.markdown });
-          break;
-        case "report":
-          if (typeof p.path === "string") patch({ reportPath: p.path });
-          break;
-        case "done":
-          patch({
-            done: {
-              status: typeof p.status === "string" ? p.status : "succeeded",
-              elapsedMs: typeof p.elapsed_ms === "number" ? p.elapsed_ms : null,
-              tokens:
-                p.tokens && typeof p.tokens.input === "number"
-                  ? {
-                      input: p.tokens.input,
-                      output: typeof p.tokens.output === "number" ? p.tokens.output : 0,
-                      cache_read: typeof p.tokens.cache_read === "number" ? p.tokens.cache_read : 0,
-                    }
-                  : null,
-              recovered: p.recovered === true,
+      case "sql":
+        this.patch({
+          sqls: [
+            ...cur.sqls,
+            {
+              sql: typeof payload.sql === "string" ? payload.sql : "",
+              rows: typeof payload.rows === "number" ? payload.rows : null,
+              truncated: payload.truncated === true,
+              elapsedMs: typeof payload.elapsed_ms === "number" ? payload.elapsed_ms : null,
             },
-            terminal: true,
-            terminalFromStatus: false, // 真 done 事件到达：以事件为准，覆盖此前的 status 兜底
-          });
-          es.close(); // done 后关流（契约 §4）
-          break;
-        case "error":
-          // 终态展示即定，但流不关：网关在 error 后仍发 done（status/elapsed/tokens）并主动关流，
-          // 提前断开会连带断掉 BFF↔网关管道，done 途经不了代理 → 记账 status 永远停在 queued。
-          patch({
-            error: { code: String(p.code ?? "UNKNOWN"), message: String(p.message ?? "未知错误") },
+          ],
+        });
+        break;
+      case "answer":
+        if (typeof payload.markdown === "string") this.patch({ answer: payload.markdown });
+        break;
+      case "report":
+        if (typeof payload.path === "string") this.patch({ reportPath: payload.path });
+        break;
+      case "done": {
+        const status = typeof payload.status === "string" ? payload.status : "succeeded";
+        this.patch({
+          done: {
+            status,
+            elapsedMs: typeof payload.elapsed_ms === "number" ? payload.elapsed_ms : null,
+            tokens:
+              payload.tokens && typeof payload.tokens.input === "number"
+                ? {
+                    input: payload.tokens.input,
+                    output: typeof payload.tokens.output === "number" ? payload.tokens.output : 0,
+                    cache_read:
+                      typeof payload.tokens.cache_read === "number" ? payload.tokens.cache_read : 0,
+                  }
+                : null,
+            recovered: payload.recovered === true,
+          },
+          terminal: true,
+          terminalFromStatus: false,
+        });
+        this.closeStream();
+        this.clearPoll();
+        if (status === "failed" || status === "cancelled") {
+          void this.checkRecoveryAfterDone();
+        }
+        break;
+      }
+      case "error":
+        if (payload.code === CLEANUP_RECOVERY_CODE) {
+          this.enterRecovery();
+        } else {
+          this.patch({
+            error: {
+              code: String(payload.code ?? "UNKNOWN"),
+              message: String(payload.message ?? "未知错误"),
+            },
             terminal: true,
             terminalFromStatus: false,
           });
-          break;
-      }
-    };
-
-    // P3 边界2（重连幂等）：网关每帧带 `id: seq`，BFF 字节透传，重连补发按 Last-Event-ID 裁剪——
-    // 正常路径本无重复帧；此守卫是防御纵深（Last-Event-ID 丢失/代理重启等场景的重叠帧）：
-    // 按 lastEventId 丢弃重复帧，保证 timeline/计数/SQL 列表在重连后绝不翻倍。
-    // 刷新/重挂场景（全新 EventSource、无 Last-Event-ID → 网关从 seq 0 全量重放）不受影响：
-    // 本 effect 先建 fresh state + 空 seenIds，全量重放正是所需。
-    const seenIds = new Set<string>();
-    for (const t of EVENT_TYPES) {
-      es.addEventListener(t, (ev) => {
-        if (t === "error" && typeof (ev as MessageEvent).data !== "string") {
-          // 原生连接错误（与 SSE error 事件同名）：CLOSED=致命（BFF 非 200 等）→ 关流走 status 兜底；
-          // 否则浏览器将自动重连（自带 Last-Event-ID），只提示"重连中"。
-          if (es.readyState === EventSource.CLOSED) {
-            es.close();
-            patch({ conn: "reconnecting" });
-            void pollStatus();
-          } else {
-            patch({ conn: "reconnecting" });
-          }
-          return;
         }
-        const sid = (ev as MessageEvent).lastEventId;
-        if (sid) {
-          if (seenIds.has(sid)) return; // 与已收帧重叠（同 seq）：幂等丢弃
-          seenIds.add(sid);
-        }
-        handle(t, (ev as MessageEvent).data);
-      });
+        break;
+      default:
+        break;
     }
-    es.onopen = () => patch({ conn: "open" });
+  }
 
-    // 终态兜底轮询：流可能静默结束（reaper 收尾无 done 事件）或卡死——每 8s 以任务状态对账一次。
-    const poller = setInterval(() => {
-      if (!stateRef.current.terminal) void pollStatus();
-    }, 8000);
+  private handleNativeError(): void {
+    if (this.disposed || !this.es) return;
+    if (this.es.readyState === ES_CLOSED) {
+      this.closeStream();
+      if (this.stateValue.terminal) return;
+      this.patch({ conn: "reconnecting" });
+      this.clearPoll();
+      void this.pollStatusOnce();
+    } else {
+      // EventSource 自动重连中（保留旧行为），不由 UI 主动重建。
+      this.patch({ conn: "reconnecting" });
+    }
+  }
 
-    esRef.current = es;
+  private enterRecovery(): void {
+    if (this.disposed) return;
+    this.patch({ recoveryRequired: true, conn: "recovering" });
+    this.closeStream();
+    if (this.stateValue.terminal) {
+      // 真实业务 done 已收：保留业务终态，只确认/展示资源恢复状态。
+      void this.checkRecoveryAfterDone();
+      return;
+    }
+    this.clearPoll();
+    void this.pollStatusOnce();
+  }
+
+  private async checkRecoveryAfterDone(): Promise<void> {
+    try {
+      const st = await this.fetchStatus(this.runId);
+      if (this.disposed || st.recovery_required !== true) return;
+      this.patch({ recoveryRequired: true, conn: "recovering" });
+      if (TERMINAL_STATUS.has(st.status)) {
+        this.applyBusinessTerminalFromStatus(st, true);
+      }
+      // 业务终态 + 资源待恢复：继续低频 GET，人工解除 hold 后能自动清掉提示。
+      this.schedulePoll(this.pollIntervalMs);
+    } catch {
+      // 一次性核对失败：保留已收到的真实 done，不伪造 recovery。
+    }
+  }
+
+  private async pollStatusOnce(): Promise<void> {
+    if (this.disposed || this.pollInFlight) return;
+    if (this.stateValue.terminal && !this.stateValue.recoveryRequired) return;
+    this.pollInFlight = true;
+    let schedule = true;
+    try {
+      const st = await this.fetchStatus(this.runId);
+      if (this.disposed) return;
+      this.statusFailures = 0;
+      this.applyStatus(st);
+      schedule = !this.stateValue.terminal || this.stateValue.recoveryRequired;
+    } catch {
+      if (!this.disposed) {
+        this.statusFailures += 1;
+        if (this.statusFailures >= 2) this.patch({ conn: "reconnecting" });
+      }
+    } finally {
+      this.pollInFlight = false;
+      if (
+        !this.disposed &&
+        schedule &&
+        (!this.stateValue.terminal || this.stateValue.recoveryRequired)
+      ) {
+        this.schedulePoll(this.pollIntervalMs);
+      }
+    }
+  }
+
+  private applyStatus(st: TaskStatus): void {
+    const wasRecovery = this.stateValue.recoveryRequired;
+    if (st.recovery_required === true) {
+      this.statusTerminalSeen = false;
+      this.patch({ recoveryRequired: true, conn: "recovering" });
+      this.closeStream();
+      if (TERMINAL_STATUS.has(st.status)) {
+        this.applyBusinessTerminalFromStatus(st, true);
+      }
+      return;
+    }
+
+    if (wasRecovery) this.patch({ recoveryRequired: false });
+    if (TERMINAL_STATUS.has(st.status)) {
+      // 非 recovery 的兜底仍保留旧的双轮确认，避开 done 帧仍在途的竞态。
+      if (!wasRecovery && !this.statusTerminalSeen) {
+        this.statusTerminalSeen = true;
+        return;
+      }
+      this.applyBusinessTerminalFromStatus(st, false);
+      return;
+    }
+
+    this.statusTerminalSeen = false;
+    if (wasRecovery) {
+      // 人工恢复：任务仍在跑/已回队列，从最后一条真实事件 seq 续流；绝不用合成 id。
+      this.openStream(this.lastRealSeq);
+    }
+  }
+
+  private applyBusinessTerminalFromStatus(st: TaskStatus, withRecovery: boolean): void {
+    if (st.status === "succeeded" || st.status === "cancelled") {
+      if (this.stateValue.done === null) {
+        this.patch({
+          done: { status: st.status, elapsedMs: null, tokens: null, recovered: false },
+          terminal: true,
+          terminalFromStatus: true,
+        });
+      } else {
+        this.patch({ terminal: true });
+      }
+    } else if (st.status === "failed") {
+      const hadDone = this.stateValue.done !== null;
+      const businessCode =
+        st.error_code && st.error_code !== CLEANUP_RECOVERY_CODE ? st.error_code : null;
+      if (this.stateValue.error === null && businessCode !== null) {
+        this.patch({
+          error: { code: businessCode, message: "任务执行失败（未收到失败详情事件）" },
+        });
+      } else if (!withRecovery && this.stateValue.error === null) {
+        this.patch({
+          error: {
+            code: businessCode ?? "ENGINE_ERROR",
+            message: "任务执行失败（未收到失败详情事件）",
+          },
+        });
+      }
+      if (withRecovery && this.stateValue.done === null) {
+        this.patch({
+          done: { status: "failed", elapsedMs: null, tokens: null, recovered: false },
+        });
+      }
+      this.patch({
+        terminal: true,
+        terminalFromStatus: !hadDone,
+      });
+    } else {
+      return;
+    }
+    this.closeStream();
+    this.clearPoll();
+  }
+}
+
+export function useTaskStream(runId: string, onTerminal?: () => void): StreamState {
+  const [stream, setStream] = useState<{ runId: string; state: StreamState }>(() => ({
+    runId,
+    state: initialState(),
+  }));
+  const state = stream.runId === runId ? stream.state : initialState();
+  const onTerminalRef = useRef(onTerminal);
+
+  useEffect(() => {
+    onTerminalRef.current = onTerminal;
+  }, [onTerminal]);
+
+  useEffect(() => {
+    if (!runId) return;
+    let disposed = false;
+    const controller = new TaskStreamController({
+      runId,
+      onState: (next) => {
+        if (!disposed) setStream({ runId, state: next });
+      },
+      fetchStatus: apiTaskStatus,
+      createEventSource: (url) => new EventSource(url) as unknown as StreamEventSource,
+    });
+    controller.start();
     return () => {
-      clearInterval(poller);
-      es.close();
-      if (esRef.current === es) esRef.current = null;
+      disposed = true;
+      controller.dispose();
     };
   }, [runId]);
 
-  // 关流时机：done 事件后（契约 §4）或 status 兜底收尾（不会再有 done）。
-  // 仅收到 error 事件时保持连接等 done 途经 BFF 落账（见上）。
-  useEffect(() => {
-    if (state.terminal && (state.done !== null || state.terminalFromStatus)) esRef.current?.close();
-  }, [state.terminal, state.done, state.terminalFromStatus]);
-
-  // 终态回调（用于刷新会话列表等旁路动作）
   useEffect(() => {
     if (state.terminal) onTerminalRef.current?.();
   }, [state.terminal]);
