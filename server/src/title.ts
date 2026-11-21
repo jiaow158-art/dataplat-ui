@@ -1,4 +1,4 @@
-// P4 会话自动标题（2026-10-07 裁定）：轻量 LLM 能力——BFF 直连 DeepSeek 单轮 chat，
+// P4 会话自动标题（2026-10-07 裁定）：轻量 LLM 能力——BFF 使用问数模型入口发起单轮 chat，
 // 无工具/无 agent/8s 超时/单次不重试。**标题是 presentation metadata only**：
 // 只写 ui_sessions 行，与 /api/ask 的 gwBody（question/client_submission_id/session_id 三字段
 // 白名单）无任何数据流交集——绝不进入 system prompt / user message / 六步法 / SQL 生成。
@@ -33,22 +33,31 @@ export function sanitizeTitle(raw: string): string | null {
   return t;
 }
 
-/** 生成标题：成功返回清洗后的标题；模糊拒绝/任何失败/未配置 key → null。
+/** 生成标题：成功返回清洗后的标题；模糊拒绝/任何失败/未配置模型入口 → null。
  *  纯出站调用（Bearer 只进请求头），异常全吞——标题不是关键链路。 */
 export async function generateTitle(question: string): Promise<string | null> {
-  const key = process.env.DEEPSEEK_API_KEY;
-  if (!key || !question.trim()) return null; // 未配置 key = 功能静默关闭
+  const key = process.env.DEEPSEEK_API_KEY?.trim();
+  const baseUrl = process.env.DEEPSEEK_BASE_URL?.trim();
+  const model = process.env.DEEPSEEK_MODEL?.trim();
+  if (!key || !baseUrl || !model || !question.trim()) return null;
   try {
-    const r = await fetch("https://api.deepseek.com/chat/completions", {
+    const url = new URL(baseUrl);
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
+      return null;
+    }
+    url.pathname = `${url.pathname.replace(/\/+$/u, "")}/chat/completions`;
+    const r = await fetch(url, {
       method: "POST",
+      redirect: "error",
       headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
       body: JSON.stringify({
-        model: "deepseek-chat",
+        model,
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: question.slice(0, 200) },
         ],
-        max_tokens: 48,
+        // 官方 deepseek-flash 为推理模型：reasoning 也计入 max_tokens，48 会被耗尽导致 content 为空。
+        max_tokens: 512,
         temperature: 0.3,
       }),
       signal: AbortSignal.timeout(8000),

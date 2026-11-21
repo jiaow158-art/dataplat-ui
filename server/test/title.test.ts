@@ -4,11 +4,24 @@ import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { generateTitle, sanitizeTitle } from "../src/title.ts";
 
-const ENV_KEY = process.env.DEEPSEEK_API_KEY;
+const ENV_KEYS = ["DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL", "DEEPSEEK_MODEL"] as const;
+const ENV_BEFORE = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]])) as Record<
+  (typeof ENV_KEYS)[number],
+  string | undefined
+>;
 afterEach(() => {
-  if (ENV_KEY === undefined) delete process.env.DEEPSEEK_API_KEY;
-  else process.env.DEEPSEEK_API_KEY = ENV_KEY;
+  for (const k of ENV_KEYS) {
+    if (ENV_BEFORE[k] === undefined) delete process.env[k];
+    else process.env[k] = ENV_BEFORE[k];
+  }
 });
+
+/** 标题沿共享模型入口：成功路径三项缺一不可。 */
+function useModelEnv(): void {
+  process.env.DEEPSEEK_API_KEY = "test-key-title";
+  process.env.DEEPSEEK_BASE_URL = "https://api.example.test/v1";
+  process.env.DEEPSEEK_MODEL = "test-model";
+}
 
 // ── sanitizeTitle ────────────────────────────────────────────────────────────────
 
@@ -41,8 +54,8 @@ test("sanitizeTitle：超长截断到 24 字符", () => {
 
 const realFetch = globalThis.fetch;
 
-test("generateTitle：未配置 DEEPSEEK_API_KEY → null 且不出网", async () => {
-  delete process.env.DEEPSEEK_API_KEY;
+test("generateTitle：未配置模型入口 → null 且不出网", async () => {
+  for (const k of ENV_KEYS) delete process.env[k];
   let called = 0;
   globalThis.fetch = (async () => (called++, realFetch("http://127.0.0.1:1"))) as typeof fetch;
   try {
@@ -54,7 +67,7 @@ test("generateTitle：未配置 DEEPSEEK_API_KEY → null 且不出网", async (
 });
 
 test("generateTitle：正常响应经 sanitizer 落库形态；SKIP/空 content → null", async () => {
-  process.env.DEEPSEEK_API_KEY = "test-key-title";
+  useModelEnv();
   const cases: { content: unknown; want: string | null }[] = [
     { content: "9月集团业绩达成分析", want: "9月集团业绩达成分析" },
     { content: "## 华东近期业绩下滑分析", want: "华东近期业绩下滑分析" },
@@ -71,7 +84,7 @@ test("generateTitle：正常响应经 sanitizer 落库形态；SKIP/空 content 
 });
 
 test("generateTitle：非 200 / 网络异常 / 超时 → null（宁缺毋滥，异常不外泄）", async () => {
-  process.env.DEEPSEEK_API_KEY = "test-key-title";
+  useModelEnv();
   globalThis.fetch = (async () => new Response("rate limited", { status: 429 })) as typeof fetch;
   assert.equal(await generateTitle("q"), null);
   globalThis.fetch = (async () => {
@@ -107,17 +120,18 @@ test("generateTitle：非 200 / 网络异常 / 超时 → null（宁缺毋滥，
 });
 
 test("generateTitle：请求体形态——system+user 双消息、max_tokens 上限（成本围栏）", async () => {
-  process.env.DEEPSEEK_API_KEY = "test-key-title";
+  useModelEnv();
   let captured: any = null;
-  globalThis.fetch = (async (_u: unknown, init?: RequestInit) => {
-    captured = { headers: init?.headers, body: JSON.parse(String(init?.body)) };
+  globalThis.fetch = (async (u: unknown, init?: RequestInit) => {
+    captured = { url: String(u), headers: init?.headers, body: JSON.parse(String(init?.body)) };
     return new Response(JSON.stringify({ choices: [{ message: { content: "库存分析" } }] }), { status: 200 });
   }) as typeof fetch;
   const out = await generateTitle("看一下瓷砖库存");
   assert.equal(out, "库存分析");
   assert.equal((captured.headers as Record<string, string>).authorization, "Bearer test-key-title", "key 只进请求头");
-  assert.equal(captured.body.model, "deepseek-chat");
-  assert.ok(captured.body.max_tokens <= 48, "max_tokens 围栏");
+  assert.equal(captured.url, "https://api.example.test/v1/chat/completions", "base URL 拼 chat/completions");
+  assert.equal(captured.body.model, "test-model");
+  assert.ok(captured.body.max_tokens <= 512, "max_tokens 围栏（官方推理模型 reasoning 计入）");
   assert.equal(captured.body.messages.length, 2);
   assert.equal(captured.body.messages[1].content, "看一下瓷砖库存");
   assert.ok(captured.body.messages[0].content.includes("SKIP"), "system 提示含模糊拒绝规则");
